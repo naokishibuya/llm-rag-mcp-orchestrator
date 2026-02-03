@@ -1,28 +1,28 @@
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 from .base import BaseChat, BaseEmbeddings, LLMResponse, EmbeddingResponse
 
 
-def _configure_genai():
+def _get_client() -> genai.Client:
     load_dotenv()
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set. Add to .env or export it.")
-    genai.configure(api_key=api_key)
+        raise ValueError("GEMINI_API_KEY not set. Add to .env or export it.")
+    return genai.Client(api_key=api_key)
 
 
 class GeminiChat(BaseChat):
     def __init__(self, model: str, temperature: float = 0.5, **kwargs):
         super().__init__(model, temperature, **kwargs)
-        _configure_genai()
-        self._model = genai.GenerativeModel(
-            model_name=model,
-            generation_config={"temperature": temperature},
-        )
+        self._client = _get_client()
 
     def complete(self, prompt: str) -> LLMResponse:
-        resp = self._model.generate_content(prompt)
+        resp = self._client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config={"temperature": self.temperature},
+        )
         usage = resp.usage_metadata
 
         return LLMResponse(
@@ -34,13 +34,16 @@ class GeminiChat(BaseChat):
         )
 
     def chat(self, messages: list[dict[str, str]]) -> LLMResponse:
-        chat = self._model.start_chat(history=[])
+        chat = self._client.chats.create(model=self.model)
+
+        # Send all messages except the last one to build history
         for msg in messages[:-1]:
             if msg["role"] == "user":
-                chat.send_message(msg["content"])
+                chat.send_message(message=msg["content"])
 
+        # Send the last message and get the response
         last_msg = messages[-1]["content"] if messages else ""
-        resp = chat.send_message(last_msg)
+        resp = chat.send_message(message=last_msg)
         usage = resp.usage_metadata
 
         return LLMResponse(
@@ -55,13 +58,23 @@ class GeminiChat(BaseChat):
 class GeminiEmbeddings(BaseEmbeddings):
     def __init__(self, model: str = "text-embedding-004", **kwargs):
         super().__init__(model, **kwargs)
-        _configure_genai()
+        self._client = _get_client()
 
     def embed(self, texts: list[str]) -> EmbeddingResponse:
-        result = genai.embed_content(model=f"models/{self.model}", content=texts)
+        result = self._client.models.embed_content(
+            model=self.model,
+            contents=texts,
+        )
+
+        # Handle both single and batch embeddings
+        embeddings = result.embeddings
+        if embeddings and hasattr(embeddings[0], "values"):
+            embedding_list = [e.values for e in embeddings]
+        else:
+            embedding_list = embeddings
 
         return EmbeddingResponse(
-            embeddings=result["embedding"] if isinstance(result["embedding"][0], list) else [result["embedding"]],
+            embeddings=embedding_list,
             input_tokens=0,
             model=self.model,
         )

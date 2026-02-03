@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 from ..safety import Intent
 from ..tools import get_finance_quote
@@ -24,6 +24,8 @@ class ChatAgent(BaseAgent):
                 answer="Error: Last message must be from user.",
                 intent=Intent.BAD,
                 moderation=None,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         last_message = messages[-1].content
@@ -37,6 +39,8 @@ class ChatAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         if self.should_escalate(intent):
@@ -45,6 +49,8 @@ class ChatAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         if intent.intent == Intent.SMALL_TALK:
@@ -54,7 +60,9 @@ class ChatAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
-                metrics={"input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
+                model=self.model,
+                embedding_model=self.embedding_model,
+                metrics=self._build_metrics(response),
             )
 
         if intent.intent == Intent.FINANCE_QUOTE:
@@ -64,6 +72,9 @@ class ChatAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
+                metrics={"tool": "mcp:finance_quote"},
             )
 
         if intent.intent == Intent.MEMORY_WRITE:
@@ -72,6 +83,8 @@ class ChatAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         response = self._chat_with_context(last_message, history)
@@ -80,7 +93,9 @@ class ChatAgent(BaseAgent):
             intent=intent.intent,
             moderation=moderation,
             rationale=intent.rationale,
-            metrics={"input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
+            model=self.model,
+                embedding_model=self.embedding_model,
+            metrics=self._build_metrics(response),
         )
 
     def _chat_with_context(self, query: str, history: list[Message]) -> LLMResponse:

@@ -13,6 +13,8 @@ class AskAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         if self.should_escalate(intent):
@@ -21,6 +23,8 @@ class AskAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         if intent.intent == Intent.SMALL_TALK:
@@ -30,7 +34,9 @@ class AskAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
-                metrics={"input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
+                model=self.model,
+                embedding_model=self.embedding_model,
+                metrics=self._build_metrics(response),
             )
 
         if intent.intent == Intent.FINANCE_QUOTE:
@@ -40,6 +46,9 @@ class AskAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
+                metrics={"tool": "mcp:finance_quote"},
             )
 
         if intent.intent == Intent.MEMORY_WRITE:
@@ -48,6 +57,8 @@ class AskAgent(BaseAgent):
                 intent=intent.intent,
                 moderation=moderation,
                 rationale=intent.rationale,
+                model=self.model,
+                embedding_model=self.embedding_model,
             )
 
         response = self.generate_with_context(question)
@@ -56,5 +67,7 @@ class AskAgent(BaseAgent):
             intent=intent.intent,
             moderation=moderation,
             rationale=intent.rationale,
-            metrics={"input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
+            model=self.model,
+                embedding_model=self.embedding_model,
+            metrics=self._build_metrics(response),
         )

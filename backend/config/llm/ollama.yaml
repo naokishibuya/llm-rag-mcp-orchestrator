@@ -1,9 +1,0 @@
-chat:
-  class: backend.llm.ollama.OllamaChat
-  model: qwen2.5:7b
-  temperature: 0.5
-  num_ctx: 16384
-
-embeddings:
-  class: backend.llm.ollama.OllamaEmbeddings
-  model: nomic-embed-text

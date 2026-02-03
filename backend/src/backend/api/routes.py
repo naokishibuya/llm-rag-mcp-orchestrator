@@ -2,38 +2,32 @@ from fastapi import APIRouter
 from .models import AskRequest, ChatRequest
 from ..agent import AskAgent, ChatAgent, Message
 from ..metrics import get_tracker
+from ..llm import list_models, list_embeddings
 
 
 router = APIRouter()
 
-_ask_agent: AskAgent | None = None
-_chat_agent: ChatAgent | None = None
+
+@router.get("/models")
+async def get_models():
+    return {"models": list_models()}
 
 
-def get_ask_agent() -> AskAgent:
-    global _ask_agent
-    if _ask_agent is None:
-        _ask_agent = AskAgent()
-    return _ask_agent
-
-
-def get_chat_agent() -> ChatAgent:
-    global _chat_agent
-    if _chat_agent is None:
-        _chat_agent = ChatAgent()
-    return _chat_agent
+@router.get("/embeddings")
+async def get_embeddings():
+    return {"embeddings": list_embeddings()}
 
 
 @router.post("/ask")
 async def ask(request: AskRequest):
-    agent = get_ask_agent()
+    agent = AskAgent(model=request.model, embedding_model=request.embedding_model)
     response = await agent.run(request.question)
     return response.to_dict()
 
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
-    agent = get_chat_agent()
+    agent = ChatAgent(model=request.model, embedding_model=request.embedding_model)
     messages = [Message(role=m.role, content=m.content) for m in request.messages]
     response = await agent.run(messages)
     return response.to_dict()

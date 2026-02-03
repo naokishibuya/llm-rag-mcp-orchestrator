@@ -1,8 +1,0 @@
-chat:
-  class: backend.llm.gemini.GeminiChat
-  model: gemini-2.5-flash
-  temperature: 0.5
-
-embeddings:
-  class: backend.llm.gemini.GeminiEmbeddings
-  model: text-embedding-004

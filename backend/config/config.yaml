@@ -1,5 +1,31 @@
-llm:
-  profile: llm/ollama.yaml
+chat:
+  - class: backend.llm.ollama.OllamaChat
+    model: qwen2.5:7b
+    temperature: 0.5
+    num_ctx: 16384
+  - class: backend.llm.gemini.GeminiChat
+    model: gemini-2.5-flash
+    temperature: 0.5
+
+embeddings:
+  - class: backend.llm.ollama.OllamaEmbeddings
+    model: nomic-embed-text
+  - class: backend.llm.gemini.GeminiEmbeddings
+    model: text-embedding-004
+
+pricing:
+  qwen2.5:7b:
+    input: 0.00
+    output: 0.00
+  gemini-2.5-flash:
+    input: 0.30
+    output: 2.50
+  nomic-embed-text:
+    input: 0.00
+    output: 0.00
+  text-embedding-004:
+    input: 0.00
+    output: 0.00
 
 metrics:
   enabled: true

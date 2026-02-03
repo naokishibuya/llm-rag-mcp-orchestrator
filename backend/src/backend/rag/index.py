@@ -63,19 +63,28 @@ def load_documents_from_dir(path: Path) -> list[Document]:
     return documents
 
 
-_index: VectorIndex | None = None
+_indexes: dict[str, VectorIndex] = {}
+_data_dir = Path(__file__).parent.parent.parent.parent.parent / "data"
 
 
-def get_index() -> VectorIndex:
-    global _index
-    if _index is None:
-        from ..llm import get_embeddings
-        _index = VectorIndex(get_embeddings())
+def get_index(embedding_model: str | None = None) -> VectorIndex:
+    from ..llm import get_embeddings, list_embeddings
 
-        data_dir = Path(__file__).parent.parent.parent.parent.parent / "data"
-        if data_dir.exists():
-            docs = load_documents_from_dir(data_dir)
+    if embedding_model is None:
+        models = list_embeddings()
+        if not models:
+            raise ValueError("No embedding models configured")
+        embedding_model = models[0]
+
+    if embedding_model not in _indexes:
+        embeddings = get_embeddings(embedding_model)
+        index = VectorIndex(embeddings)
+
+        if _data_dir.exists():
+            docs = load_documents_from_dir(_data_dir)
             if docs:
-                _index.add_documents(docs)
+                index.add_documents(docs)
 
-    return _index
+        _indexes[embedding_model] = index
+
+    return _indexes[embedding_model]

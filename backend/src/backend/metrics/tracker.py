@@ -3,13 +3,7 @@ from datetime import datetime
 from typing import Any
 import threading
 
-
-COST_PER_1M_TOKENS = {
-    "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
-    "gemini-2.5-pro": {"input": 1.25, "output": 5.00},
-    "text-embedding-004": {"input": 0.00, "output": 0.00},
-    "default": {"input": 0.00, "output": 0.00},
-}
+from ..config import calc_cost
 
 
 @dataclass
@@ -36,10 +30,6 @@ class MetricsTracker:
         self._request_counter += 1
         return f"req_{self._request_counter:06d}"
 
-    def _calc_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        rates = COST_PER_1M_TOKENS.get(model, COST_PER_1M_TOKENS["default"])
-        return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
-
     def record(
         self,
         model: str,
@@ -52,13 +42,15 @@ class MetricsTracker:
         if not self.enabled:
             return None
 
+        cost = calc_cost(model, input_tokens, output_tokens)
+
         metrics = RequestMetrics(
             request_id=self._next_id(),
             timestamp=datetime.now(),
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost=self._calc_cost(model, input_tokens, output_tokens),
+            cost=cost,
             latency_ms=latency_ms,
             operation=operation,
             metadata=metadata,

@@ -1,13 +1,13 @@
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
-import time
 
-from ..llm import BaseChat, get_chat
-from ..llm.base import LLMResponse
-from ..rag import VectorIndex, get_index
-from ..safety import Intent, IntentResult, ModerationResult, Verdict, classify_intent, run_moderation
+from ..config import calc_cost
+from ..llm import get_chat, LLMResponse
 from ..metrics import get_tracker
+from ..rag import get_index
+from ..safety import Intent, IntentResult, ModerationResult, classify_intent, run_moderation
 
 
 @dataclass
@@ -16,12 +16,16 @@ class AgentResponse:
     intent: Intent
     moderation: ModerationResult
     rationale: str | None = None
+    model: str = ""
+    embedding_model: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "answer": self.answer,
             "intent": self.intent.value,
+            "model": self.model,
+            "embedding_model": self.embedding_model,
             "moderation": {
                 "verdict": self.moderation.verdict.value,
                 "severity": self.moderation.severity.value,
@@ -34,10 +38,12 @@ class AgentResponse:
 
 
 class BaseAgent(ABC):
-    def __init__(self, chat: BaseChat = None, index: VectorIndex = None):
-        self.chat = chat or get_chat()
-        self.index = index or get_index()
+    def __init__(self, model: str | None = None, embedding_model: str | None = None):
+        self.chat = get_chat(model)
+        self.index = get_index(embedding_model)
         self.tracker = get_tracker()
+        self.model = self.chat.model
+        self.embedding_model = self.index.embeddings.model
 
     def analyze(self, text: str) -> tuple[IntentResult, ModerationResult]:
         moderation = run_moderation(text, self.chat)
@@ -52,6 +58,14 @@ class BaseAgent(ABC):
 
     def should_escalate(self, intent: IntentResult) -> bool:
         return intent.intent == Intent.ESCALATE
+
+    def _build_metrics(self, response: LLMResponse) -> dict[str, Any]:
+        cost = calc_cost(response.model, response.input_tokens, response.output_tokens)
+        return {
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "cost": round(cost, 6),
+        }
 
     def generate_with_context(self, query: str, top_k: int = 3) -> LLMResponse:
         results = self.index.search(query, top_k=top_k)
