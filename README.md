@@ -7,15 +7,15 @@ This project is a **full-stack Retrieval-Augmented Generation (RAG) chat demo** 
 **Tech Stack:**
 
 * **Frontend:** React (TypeScript)
-* **Backend:** FastAPI (Python)
-* **LLM:** Models served locally via Ollama (Mistral, GPT-OSS)
-* **Embeddings:** Hugging Face transformer model via HuggingFaceEmbedding
-* **Vector Database:** LlamaIndex SimpleVectorStore (in-memory, managed through VectorStoreIndex)
-* **Frameworks:** LangChain, LlamaIndex, FastMCP
+* **Backend:** FastAPI (Python) with modular architecture
+* **LLM Providers:** Ollama (local) or Google Gemini (cloud) - swappable via config
+* **Embeddings:** Ollama or Vertex AI embeddings
+* **Vector Database:** Custom numpy-based vector index
+* **Frameworks:** FastMCP for tool calling
 
 **How it works:**
 
-The application ingests documents, converts them into vector embeddings, and stores them in a FAISS index. When a user asks a question, the system retrieves the most relevant text chunks and passes them — along with the query — to the selected model to generate accurate, context-aware responses.
+The application ingests documents, converts them into vector embeddings, and stores them in a vector index. When a user asks a question, the system retrieves the most relevant text chunks and passes them — along with the query — to the selected model to generate accurate, context-aware responses.
 
 ![](images/chat-mode.png)
 
@@ -82,12 +82,11 @@ Install Ollama CLI (If not already installed)
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Install mistral
+Models defined in `config/llm/ollama.yaml` are automatically pulled on first run. To pre-download:
 
 ```bash
-ollama pull mistral
-ollama pull gpt-oss
-ollama pull llama-guard3  # for content moderation
+ollama pull qwen2.5:7b        # chat model
+ollama pull nomic-embed-text  # embeddings
 ```
 
 `ollama list` to verify the installation.
@@ -96,86 +95,111 @@ ollama pull llama-guard3  # for content moderation
 
 ## The Backend
 
+### Backend Architecture
+
+```
+backend/
+├── config/
+│   ├── config.yaml          # Main config (points to LLM profile)
+│   └── llm/
+│       ├── ollama.yaml      # Ollama settings
+│       └── gemini.yaml      # Google Gemini settings
+├── src/
+│   ├── main.py              # FastAPI entrypoint
+│   └── backend/             # Installed package
+│       ├── api/             # REST endpoints
+│       ├── agent/           # Ask/Chat agents with shared base
+│       ├── llm/             # Provider abstraction (Ollama, Gemini)
+│       ├── rag/             # Vector index and search
+│       ├── safety/          # Intent classification, moderation
+│       ├── tools/           # MCP tool integrations
+│       ├── metrics/         # Token/cost tracking
+│       └── config.py        # Config loader
+└── pyproject.toml
+```
+
 ### Setup the Backend
 
-Set up a Python virtual environment and install the required packages:
+This project uses [uv](https://github.com/astral-sh/uv) for fast Python package management:
 
 ```bash
 cd backend
+uv sync
+```
 
-python3 -m venv venv
-source venv/bin/activate
+### Configure LLM Provider
 
-pip install --upgrade pip
-pip install -r requirements.txt
+Edit `config/config.yaml` to switch providers:
+
+```yaml
+# Use Ollama (default)
+llm:
+  profile: llm/ollama.yaml
+
+# Or use Google Gemini
+llm:
+  profile: llm/gemini.yaml
+```
+
+For Gemini, set your API key via environment or `.env` file:
+
+```bash
+# Option 1: Export
+export GOOGLE_API_KEY=your_key_here
+
+# Option 2: Create backend/.env (gitignored)
+echo "GOOGLE_API_KEY=your_key_here" > backend/.env
 ```
 
 ### Run the Backend
 
-Run the FastAPI server from the `backend` directory:
-
 ```bash
-uvicorn main:app --reload
+cd src
+uv run uvicorn main:app --reload
 ```
 
-Enable verbose backend traces when needed by setting `APP_LOG_LEVEL=DEBUG` before starting the server:
+Enable verbose logging:
 
 ```bash
-APP_LOG_LEVEL=DEBUG uvicorn main:app --reload
+APP_LOG_LEVEL=DEBUG uv run uvicorn main:app --reload
 ```
 
-To see the debug logs, run:
+API documentation: `http://localhost:8000/docs`
 
-```bash
-APP_LOG_LEVEL=DEBUG uvicorn main:app --reload
-```
+### Metrics Endpoints
 
-For testing the backend, you can open `http://localhost:8000/docs` to interact with the API.
+The backend tracks token usage and costs:
+
+- `GET /metrics` - Summary of total tokens and cost
+- `GET /metrics/requests` - Per-request breakdown
 
 ## MCP Services
 
 ### Setup MCP Services
 
-Create and activate a separate virtual environment for the MCP servers, then install their dependencies. Open a new terminal window and then go to the `<project root>/services` folder:
+Install MCP server dependencies:
 
 ```bash
 cd services
-
-python3 -m venv venv
-source venv/bin/activate
-
-pip install --upgrade pip
-pip install -r requirements.txt
+uv venv
+uv pip install -r requirements.txt
 ```
 
 ### Run MCP Services
 
-MCP servers are treated as standalone processes. Activate the services environment in a separate terminal and start the toy finance server:
-
-```bash
-# in the services folder
-source venv/bin/activate
-python -m toy_finance.server
-```
-
-The server listens on `http://127.0.0.1:8030/mcp`. Keep this process running while the backend is live so finance quote requests can succeed.
-
-Alternatively, you can launch via the FastMCP CLI (the CLI imports the `mcp` object without running the module’s `__main__` block, so you must supply the connection settings explicitly):
+Start the toy finance server in a separate terminal:
 
 ```bash
 cd services
-fastmcp run toy_finance/server.py:mcp \
-  --transport streamable-http \
-  --host 127.0.0.1 \
-  --port 8030 \
-  --path /mcp
+uv run python -m toy_finance.server
 ```
 
-You can also exercise the MCP API directly (after the server is running) with:
+The server listens on `http://127.0.0.1:8030/mcp`. Keep this running while the backend is live.
+
+Test the MCP API:
 
 ```bash
-cd services
-python -m toy_finance.client
+uv run python -m toy_finance.client
 ```
 
 ### Setup the Frontend

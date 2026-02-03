@@ -1,0 +1,5 @@
+llm:
+  profile: llm/ollama.yaml
+
+metrics:
+  enabled: true
