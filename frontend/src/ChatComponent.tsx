@@ -66,6 +66,11 @@ type Message = {
   isStreaming?: boolean;
 };
 
+type UserContext = {
+  city: string;
+  timezone: string;
+};
+
 type ChatProps = {
   model: string;
 };
@@ -207,6 +212,11 @@ export default function ChatComponent({ model }: ChatProps) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [useReflection, setUseReflection] = useState(true);
+  const [userContext] = useState<UserContext>(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const city = tz.split('/').pop()!.replace(/_/g, ' ');
+    return { city, timezone: tz };
+  });
 
   const lastMsgRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -245,6 +255,14 @@ export default function ChatComponent({ model }: ChatProps) {
           messages: payloadMessages,
           model,
           use_reflection: useReflection,
+          user_context: {
+            ...userContext,
+            local_time: new Intl.DateTimeFormat('en-US', {
+              timeZone: userContext.timezone,
+              dateStyle: 'full',
+              timeStyle: 'short',
+            }).format(new Date()),
+          },
         }),
       });
 
