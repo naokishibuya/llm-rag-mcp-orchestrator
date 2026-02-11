@@ -37,8 +37,11 @@ git clone git@github.com:naokishibuya/llm-rag-chat-demo.git
 cd llm-rag-chat-demo
 
 ollama pull qwen2.5:7b
+ollama pull gemma2:9b
 ollama pull nomic-embed-text
 ```
+
+Otherwise, the backend will auto-download ollama models on first use (which may take time).
 
 ### 2. Backend
 
