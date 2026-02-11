@@ -309,7 +309,7 @@ async def chat_stream(request: ChatRequest):
                     if len(final_results) > 1:
                         good = [
                             r for r in final_results
-                            if (r.get("reflection") or {}).get("score", 1.0) >= 0.7
+                            if ((r.get("reflection") or {}).get("score") or 1.0) >= 0.7
                         ]
                         if good:
                             dropped = len(final_results) - len(good)
