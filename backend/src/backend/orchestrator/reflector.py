@@ -93,6 +93,15 @@ class Reflector:
             agent_success=state.get("agent_success", True),
         )
 
+        # For multi-intent queries, don't retry individual intents —
+        # the next intent in the queue may provide a better answer.
+        if len(state.get("intents", [])) > 1 and result.action == "retry":
+            logger.info("Multi-intent query: converting retry to accept")
+            result = ReflectionResult(
+                action="accept", score=result.score, feedback=result.feedback,
+                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+            )
+
         reflection_feedback = {
             "action": result.action,
             "score": result.score,
@@ -121,6 +130,8 @@ class Reflector:
         updates: dict = {
             "reflection_count": state.get("reflection_count", 0) + 1,
             "intent_results": intent_results,
+            "step_input_tokens": result.input_tokens,
+            "step_output_tokens": result.output_tokens,
         }
 
         if result.action == "retry":
@@ -129,22 +140,25 @@ class Reflector:
                 {"role": "user", "content": state["query"]},
                 {"role": "assistant", "content": state["agent_response"]},
             ]
-            updates["current_intent_index"] = idx
         elif result.action == "reroute":
             reflection_feedback["query"] = state["query"]
             reflection_feedback["exclude_agent"] = intent_data.get("agent")
 
-        updates["reflection_feedback"] = reflection_feedback
-
-        # Absorb edge routing logic
+        # Decide goto — max_reflections overrides retry/reroute
         reflection_count = state.get("reflection_count", 0) + 1
         if reflection_count >= state.get("max_reflections", 2):
             goto = "check_next"
+            # Clear stale feedback so the next intent starts fresh
+            updates["reflection_feedback"] = None
         elif result.action == "retry":
+            updates["current_intent_index"] = idx  # rewind only when actually retrying
+            updates["reflection_feedback"] = reflection_feedback
             goto = "agent"
         elif result.action == "reroute":
+            updates["reflection_feedback"] = reflection_feedback
             goto = "router"
         else:
+            updates["reflection_feedback"] = reflection_feedback
             goto = "check_next"
 
         return Command(update=updates, goto=goto)

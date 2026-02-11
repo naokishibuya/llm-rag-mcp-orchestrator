@@ -30,7 +30,9 @@ SYSTEM_PROMPT = """You classify user intent and route to specialized agents.
 Available agents:
 {descriptions}
 
-For queries with MULTIPLE questions, return multiple intents in order.
+Rules:
+- For a SINGLE question, return exactly ONE intent — pick the best agent.
+- For queries with MULTIPLE distinct questions, return one intent per question.
 Each intent needs: "intent" (agent type) and "params" (extracted parameters).
 
 Parameters by intent:
@@ -74,6 +76,7 @@ class Router:
             descriptions="\n".join(self._descriptions),
             params_lines="\n".join(self._params_lines),
         )
+        logger.info("Router prompt:\n%s", self._system_prompt)
 
     async def __call__(self, state: dict) -> Command:
         query = state["query"]

@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -40,109 +39,165 @@ type RouterInfo = {
   cost: number;
 };
 
-type ChatResponse = {
-  results: IntentResult[];
-  moderation: ModerationInfo;
-  router: RouterInfo;
+type TotalInfo = {
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
 };
 
 type ResponseMeta = {
   results: IntentResult[];
   moderation: ModerationInfo;
   router: RouterInfo;
+  total?: TotalInfo;
+};
+
+type ThinkingStep = {
+  step: string;
+  detail?: string;
+  tokens?: { in: number; out: number };
 };
 
 type Message = {
   role: 'user' | 'assistant';
   content: string;
   meta?: ResponseMeta;
+  thinking?: ThinkingStep[];
+  isStreaming?: boolean;
 };
 
 type ChatProps = {
   model: string;
 };
 
-function IntentMetadata({ result }: { result: IntentResult }) {
+function ChainMetadata({ meta }: { meta: ResponseMeta }) {
+  const total = meta.total;
   const parts: string[] = [];
-  parts.push(`Intent: ${result.intent}`);
-  parts.push(`Model: ${result.model}`);
-  parts.push(`Tokens: ${result.metrics.input_tokens}/${result.metrics.output_tokens}`);
 
-  const costStr = result.metrics.cost === 0
-    ? '$0.00 (free)'
-    : `$${result.metrics.cost.toFixed(6)}`;
-  parts.push(`Cost: ${costStr}`);
+  // Show model(s) used
+  const models = [...new Set(meta.results.map(r => r.model))];
+  parts.push(`Model: ${models.join(', ')}`);
 
-  if (result.metrics.tools_used && result.metrics.tools_used.length > 0) {
-    parts.push(`Tools: ${result.metrics.tools_used.join(', ')}`);
+  if (total) {
+    parts.push(`Tokens: ${total.input_tokens}/${total.output_tokens}`);
+    const costStr = total.cost === 0
+      ? '$0.00 (free)'
+      : `$${total.cost.toFixed(6)}`;
+    parts.push(`Cost: ${costStr}`);
   }
 
-  if (result.metrics.reflection) {
-    const r = result.metrics.reflection;
-    const score = r.score != null ? ` (${r.score.toFixed(1)})` : '';
-    parts.push(`Reflected: ${r.action}${score}`);
+  // Show tools used across all results
+  const tools = meta.results.flatMap(r => r.metrics.tools_used).filter(Boolean);
+  if (tools.length > 0) {
+    parts.push(`Tools: ${[...new Set(tools)].join(', ')}`);
   }
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-300 text-xs text-gray-500">
       {parts.join(' | ')}
-      {result.metrics.reflection && (
-        <details className="mt-1">
-          <summary className="cursor-pointer hover:text-gray-700">Reflection details</summary>
-          <div className="mt-1 pl-2 border-l-2 border-gray-300">
-            <div>Action: {result.metrics.reflection.action}</div>
-            {result.metrics.reflection.score != null && (
-              <div>Score: {result.metrics.reflection.score.toFixed(2)}</div>
-            )}
-            {result.metrics.reflection.feedback && (
-              <div>Feedback: {result.metrics.reflection.feedback}</div>
-            )}
-            {(result.metrics.reflection.input_tokens || result.metrics.reflection.output_tokens) ? (
-              <div>Reflection tokens: {result.metrics.reflection.input_tokens ?? 0}/{result.metrics.reflection.output_tokens ?? 0}</div>
-            ) : null}
-          </div>
-        </details>
+    </div>
+  );
+}
+
+function ThinkingSection({ steps, isStreaming }: { steps: ThinkingStep[]; isStreaming: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Auto-collapse ~1s after streaming finishes
+  const wasStreaming = useRef(true);
+  useEffect(() => {
+    if (wasStreaming.current && !isStreaming) {
+      const timer = setTimeout(() => setCollapsed(true), 1000);
+      return () => clearTimeout(timer);
+    }
+    wasStreaming.current = isStreaming;
+  }, [isStreaming]);
+
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 cursor-pointer"
+      >
+        <span className={`transition-transform ${collapsed ? '' : 'rotate-90'}`}>&#9654;</span>
+        <span>Thinking{isStreaming ? '...' : ` (${steps.length} steps)`}</span>
+        {isStreaming && (
+          <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse ml-1" />
+        )}
+      </button>
+      {!collapsed && (
+        <div className="mt-1 ml-3 pl-2 border-l-2 border-gray-300 text-xs text-gray-500 space-y-0.5">
+          {steps.map((s, i) => (
+            <div key={i}>
+              <span className="text-gray-400 mr-1">{i + 1}.</span>
+              {s.step}
+              {s.tokens && (
+                <span className="text-gray-400 ml-1">
+                  tokens: [{s.tokens.in}/{s.tokens.out}]
+                </span>
+              )}
+              {s.detail && (
+                <div className="ml-4 text-gray-400 italic break-words">
+                  {s.detail}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function AssistantMessage({ content, meta }: { content: string; meta?: ResponseMeta }) {
-  if (!meta || meta.results.length <= 1) {
-    // Single intent: one markdown block + one metadata line (same as before)
-    return (
-      <>
-        <div className="prose prose-sm max-w-none">
-          <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
-        </div>
-        {meta && meta.results.length === 1 && (
-          <IntentMetadata result={meta.results[0]} />
-        )}
-        {meta && meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
-          <div className="mt-1 text-xs text-orange-600">
-            Moderation: {meta.moderation.reason}
-          </div>
-        )}
-      </>
-    );
-  }
-
-  // Multi-intent: each sub-result separated with its own metadata
+function AssistantMessage({ content, meta, thinking, isStreaming }: {
+  content: string;
+  meta?: ResponseMeta;
+  thinking?: ThinkingStep[];
+  isStreaming?: boolean;
+}) {
   return (
     <>
-      {meta.results.map((result, i) => (
-        <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
-          <div className="prose prose-sm max-w-none">
-            <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
-          </div>
-          <IntentMetadata result={result} />
-        </div>
-      ))}
-      {meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
-        <div className="mt-2 text-xs text-orange-600">
-          Moderation: {meta.moderation.reason}
-        </div>
+      {thinking && thinking.length > 0 && (
+        <ThinkingSection steps={thinking} isStreaming={!!isStreaming} />
       )}
+      {(() => {
+        if (!meta || meta.results.length <= 1) {
+          return (
+            <>
+              {content && (
+                <div className="prose prose-sm max-w-none">
+                  <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+                </div>
+              )}
+              {meta && <ChainMetadata meta={meta} />}
+              {meta && meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
+                <div className="mt-1 text-xs text-orange-600">
+                  Moderation: {meta.moderation.reason}
+                </div>
+              )}
+            </>
+          );
+        }
+
+        return (
+          <>
+            {meta.results.map((result, i) => (
+              <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
+                <div className="prose prose-sm max-w-none">
+                  <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
+                </div>
+              </div>
+            ))}
+            <ChainMetadata meta={meta} />
+            {meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
+              <div className="mt-2 text-xs text-orange-600">
+                Moderation: {meta.moderation.reason}
+              </div>
+            )}
+          </>
+        );
+      })()}
     </>
   );
 }
@@ -172,22 +227,117 @@ export default function ChatComponent({ model }: ChatProps) {
 
     const payloadMessages = updatedMessages.map(({ role, content }) => ({ role, content }));
 
+    // Placeholder assistant message for streaming updates
+    const assistantIdx = updatedMessages.length;
+    const initialAssistant: Message = {
+      role: 'assistant',
+      content: '',
+      thinking: [],
+      isStreaming: true,
+    };
+    setMessages([...updatedMessages, initialAssistant]);
+
     try {
-      const res = await axios.post<ChatResponse>(`${API_BASE}/chat`, {
-        messages: payloadMessages,
-        model,
-        use_reflection: useReflection
+      const response = await fetch(`${API_BASE}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: payloadMessages,
+          model,
+          use_reflection: useReflection,
+        }),
       });
-      const data = res.data;
-      const content = data.results.map(r => r.answer).join('\n\n');
-      const meta: ResponseMeta = {
-        results: data.results,
-        moderation: data.moderation,
-        router: data.router,
-      };
-      setMessages([...updatedMessages, { role: 'assistant', content, meta }]);
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let thinking: ThinkingStep[] = [];
+      let results: IntentResult[] = [];
+      let moderation: ModerationInfo = { verdict: 'allow' };
+      let router: RouterInfo = { input_tokens: 0, output_tokens: 0, cost: 0 };
+      let total: TotalInfo | undefined;
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        // Keep the last potentially incomplete line in the buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
+
+          let event;
+          try {
+            event = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+
+          if (event.type === 'thinking') {
+            thinking = [...thinking, { step: event.step, detail: event.detail, tokens: event.tokens }];
+          } else if (event.type === 'answer') {
+            results = [...results, event.result];
+          } else if (event.type === 'done') {
+            moderation = event.moderation;
+            router = event.router;
+            total = event.total;
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+
+          // Update the assistant message in-place
+          const content = results.map(r => r.answer).join('\n\n');
+          const meta: ResponseMeta | undefined = results.length > 0
+            ? { results, moderation, router, total }
+            : undefined;
+
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[assistantIdx] = {
+              role: 'assistant',
+              content,
+              meta,
+              thinking: [...thinking],
+              isStreaming: true,
+            };
+            return updated;
+          });
+        }
+      }
+
+      // Finalize: mark streaming as done
+      const finalContent = results.map(r => r.answer).join('\n\n');
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[assistantIdx] = {
+          role: 'assistant',
+          content: finalContent,
+          meta: { results, moderation, router, total },
+          thinking: [...thinking],
+          isStreaming: false,
+        };
+        return updated;
+      });
     } catch {
-      setMessages([...updatedMessages, { role: 'assistant', content: 'Error contacting backend.' }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[assistantIdx] = {
+          role: 'assistant',
+          content: 'Error contacting backend.',
+          isStreaming: false,
+        };
+        return updated;
+      });
     } finally {
       setLoading(false);
     }
@@ -242,7 +392,12 @@ export default function ChatComponent({ model }: ChatProps) {
               }`}
             >
               {msg.role === 'assistant' ? (
-                <AssistantMessage content={msg.content} meta={msg.meta} />
+                <AssistantMessage
+                  content={msg.content}
+                  meta={msg.meta}
+                  thinking={msg.thinking}
+                  isStreaming={msg.isStreaming}
+                />
               ) : (
                 <div className="whitespace-pre-wrap">{msg.content}</div>
               )}

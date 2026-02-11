@@ -31,6 +31,7 @@ mcp = FastMCP(APP_NAME, instructions=INSTRUCTIONS)
 
 @mcp.tool
 async def get_stock_price(symbol: str) -> dict:
+    """Get current stock price, change, and market cap for a ticker symbol (e.g. AAPL, GOOG, TSLA)."""
     ticker = symbol.upper()
 
     try:

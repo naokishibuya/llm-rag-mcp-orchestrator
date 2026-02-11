@@ -46,9 +46,11 @@ class AgentState(TypedDict, total=False):
     reflection_count: int
     reflection_feedback: dict | None  # {"action": "accept|retry|reroute", "feedback": "..."}
 
-    # === Token tracking (router overhead) ===
+    # === Token tracking ===
     router_input_tokens: int
     router_output_tokens: int
+    step_input_tokens: int   # Per-step tokens (overwritten each node, for streaming display)
+    step_output_tokens: int
 
     # === Safety ===
     is_blocked: bool

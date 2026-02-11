@@ -52,7 +52,7 @@ class MCPAgent:
             logger.error(f"MCPAgent received error from tool {self._handler.service.name}: {data['error']}")
             return MCPResult(response=str(data["error"]), success=False)
 
-        raw_data = json.dumps(data, indent=2) if not isinstance(data, str) else data
+        raw_data = json.dumps(data, indent=2, ensure_ascii=False) if not isinstance(data, str) else data
 
         try:
             prompt = FORMAT_PROMPT.format(
