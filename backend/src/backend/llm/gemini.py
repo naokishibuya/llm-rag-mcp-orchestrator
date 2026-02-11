@@ -64,7 +64,6 @@ def _resolve_api_key(api_key_env: str = "") -> str:
     return api_key
 
 
-
 class GeminiEmbeddings:
     def __init__(self, model: str = "text-embedding-004", api_key_env: str = ""):
         self.model = model

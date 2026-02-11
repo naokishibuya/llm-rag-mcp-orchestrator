@@ -88,7 +88,7 @@ class Reflector:
             model=state["model"],
             query=intent_query,
             agent_response=state["agent_response"],
-            delegated_agent=intent_data.get("agent", "TalkerAgent"),
+            delegated_agent=intent_data.get("agent", "TalkAgent"),
             intent=intent_data.get("intent", "chat"),
             agent_success=state.get("agent_success", True),
         )

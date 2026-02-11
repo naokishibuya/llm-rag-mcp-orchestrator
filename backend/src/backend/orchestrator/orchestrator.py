@@ -8,7 +8,7 @@ from ..config import Config
 from ..llm import Registry
 from ..mcp import MCPAgent, MCPClient, MCPHandler
 from ..rag import RAGAgent
-from ..talk import TalkerAgent
+from ..talk import TalkAgent
 from .moderator import Moderator
 from .reflector import Reflector
 from .router import Router, RoutingMeta
@@ -27,8 +27,8 @@ async def _agent_node(state: dict, agents: dict) -> Command:
     idx = state["current_intent_index"]
     intent_data = state["intents"][idx]
 
-    agent_name = intent_data.get("agent", "TalkerAgent")
-    agent = agents.get(agent_name, agents["TalkerAgent"])
+    agent_name = intent_data.get("agent", "TalkAgent")
+    agent = agents.get(agent_name, agents["TalkAgent"])
 
     params = intent_data.get("params", {})
 
@@ -107,12 +107,12 @@ class Orchestrator:
 
         # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
         self._agents = {
-            "TalkerAgent": TalkerAgent(),
+            "TalkAgent": TalkAgent(),
             "RAGAgent": RAGAgent(),
         }
 
         routing: dict[str, RoutingMeta] = {
-            "TalkerAgent": RoutingMeta("chat", "General conversation, greetings", {}),
+            "TalkAgent": RoutingMeta("chat", "General conversation, greetings", {}),
             "RAGAgent": RoutingMeta("rag", "Knowledge base / documentation questions", {"query": "question"}),
         }
 

@@ -1,4 +1,4 @@
-from .talker import TalkerAgent, TalkerResult
+from .agent import TalkAgent, TalkResult
 
 
-__all__ = ["TalkerAgent", "TalkerResult"]
+__all__ = ["TalkAgent", "TalkResult"]
