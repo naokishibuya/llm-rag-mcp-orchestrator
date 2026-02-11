@@ -1,3 +1,5 @@
-from .index import VectorIndex, Document, SearchResult, get_index, load_documents_from_dir
+from .client import RAGClient, RAGResult
+from .agent import RAGAgent
 
-__all__ = ["VectorIndex", "Document", "SearchResult", "get_index", "load_documents_from_dir"]
+
+__all__ = ["RAGAgent", "RAGClient", "RAGResult"]

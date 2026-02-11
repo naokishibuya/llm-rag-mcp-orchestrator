@@ -2,23 +2,24 @@ chat:
   - class: backend.llm.ollama.OllamaChat
     model: qwen2.5:7b
     temperature: 0.5
-    num_ctx: 16384
   - class: backend.llm.gemini.GeminiChat
     model: gemini-2.5-flash
     temperature: 0.5
+    api_key_env: GEMINI_API_KEY
 
 embeddings:
   - class: backend.llm.ollama.OllamaEmbeddings
     model: nomic-embed-text
   - class: backend.llm.gemini.GeminiEmbeddings
     model: text-embedding-004
+    api_key_env: GEMINI_API_KEY
 
 pricing:
   qwen2.5:7b:
     input: 0.00
     output: 0.00
-  gemini-2.5-flash:
-    input: 0.30
+  gemini-2.5-flash: # may not apply when using free-tier
+    input: 0.30  # $ per 1M tokens
     output: 2.50
   nomic-embed-text:
     input: 0.00
@@ -29,3 +30,15 @@ pricing:
 
 metrics:
   enabled: true
+
+mcp_services:
+  finance:
+    url: http://127.0.0.1:8030/mcp
+    format: "Markdown table with bold headers: **Symbol**, **Price**, **Change**, **Market Cap**. Use bold for values too."
+  weather:
+    url: http://127.0.0.1:8031/mcp
+    format: "Bullet list with bold labels: **City**, **Temperature**, **Condition**, **Humidity**."
+  tavily:
+    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
+    timeout: 30
+    format: "Bulleted list of results, each with a markdown link title and a one-line summary."

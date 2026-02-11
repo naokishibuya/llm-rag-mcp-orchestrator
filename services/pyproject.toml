@@ -1,0 +1,24 @@
+[project]
+name = "mcp-services"
+version = "0.1.0"
+description = "MCP tool servers for LLM RAG Chat Demo"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.12.0",
+    "mcp>=1.16.0",
+    "httpx>=0.28.0",
+    "yfinance>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_services"]

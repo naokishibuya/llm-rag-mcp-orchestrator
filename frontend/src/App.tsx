@@ -32,11 +32,11 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col items-center bg-gradient-to-br from-blue-50 to-white p-6">
-      <h1 className="text-4xl font-bold mb-6 text-blue-600">LLM RAG Chat Demo</h1>
+    <div className="h-screen flex flex-col items-center bg-gradient-to-br from-blue-50 to-white p-4 overflow-hidden">
+      <h1 className="text-3xl font-bold mb-4 text-blue-600 shrink-0">LLM RAG MCP Orchestrator Chat Demo</h1>
 
       {(models.length > 0 || embeddings.length > 0) && (
-        <div className="flex gap-4 mb-6">
+        <div className="flex gap-4 mb-4 shrink-0">
           {models.length > 0 && (
             <label className="flex items-center gap-2 bg-white border rounded-lg shadow px-4 py-2">
               <span className="text-sm font-semibold text-gray-600">Chat Model</span>

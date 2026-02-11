@@ -1,80 +1,75 @@
 import os
-from dotenv import load_dotenv
+
 from google import genai
-from .base import BaseChat, BaseEmbeddings, LLMResponse, EmbeddingResponse
+from google.genai import types
+
+from .protocol import Response
 
 
-def _get_client() -> genai.Client:
-    load_dotenv()
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not set. Add to .env or export it.")
-    return genai.Client(api_key=api_key)
+class GeminiChat:
+    def __init__(self, model: str, temperature: float = 0.5):
+        self.model = model
+        self.temperature = temperature
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY required")
+        self._client = genai.Client(api_key=api_key)
 
-
-class GeminiChat(BaseChat):
-    def __init__(self, model: str, temperature: float = 0.5, **kwargs):
-        super().__init__(model, temperature, **kwargs)
-        self._client = _get_client()
-
-    def complete(self, prompt: str) -> LLMResponse:
-        resp = self._client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config={"temperature": self.temperature},
+    def chat(self, messages: list[dict[str, str]], schema: type | None = None) -> Response:
+        contents, system_instruction = self._build_contents(messages)
+        config = types.GenerateContentConfig(
+            temperature=self.temperature,
+            system_instruction=system_instruction,
         )
-        usage = resp.usage_metadata
-
-        return LLMResponse(
-            text=resp.text,
-            input_tokens=getattr(usage, "prompt_token_count", 0),
-            output_tokens=getattr(usage, "candidates_token_count", 0),
+        if schema is not None:
+            config.response_mime_type = "application/json"
+            config.response_schema = schema
+        response = self._client.models.generate_content(
             model=self.model,
-            raw=resp,
+            contents=contents,
+            config=config,
+        )
+        return self._to_response(response)
+
+    def _build_contents(
+        self, messages: list[dict[str, str]]
+    ) -> tuple[list[types.Content], str | None]:
+        contents = []
+        system_instruction = None
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                system_instruction = content
+            elif role == "user":
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(content)]))
+            else:
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(content)]))
+        return contents, system_instruction
+
+    def _to_response(self, response) -> Response:
+        return Response(
+            text=response.text or "",
+            input_tokens=response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
+            output_tokens=response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
+            model=self.model,
         )
 
-    def chat(self, messages: list[dict[str, str]]) -> LLMResponse:
-        chat = self._client.chats.create(model=self.model)
 
-        # Send all messages except the last one to build history
-        for msg in messages[:-1]:
-            if msg["role"] == "user":
-                chat.send_message(message=msg["content"])
+class GeminiEmbeddings:
+    def __init__(self, model: str = "text-embedding-004"):
+        self.model = model
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY required")
+        self._client = genai.Client(api_key=api_key)
 
-        # Send the last message and get the response
-        last_msg = messages[-1]["content"] if messages else ""
-        resp = chat.send_message(message=last_msg)
-        usage = resp.usage_metadata
-
-        return LLMResponse(
-            text=resp.text,
-            input_tokens=getattr(usage, "prompt_token_count", 0),
-            output_tokens=getattr(usage, "candidates_token_count", 0),
-            model=self.model,
-            raw=resp,
-        )
-
-
-class GeminiEmbeddings(BaseEmbeddings):
-    def __init__(self, model: str = "text-embedding-004", **kwargs):
-        super().__init__(model, **kwargs)
-        self._client = _get_client()
-
-    def embed(self, texts: list[str]) -> EmbeddingResponse:
+    def embed(self, texts: list[str] | str) -> list[list[float]] | list[float]:
+        if isinstance(texts, str):
+            texts = [texts]
         result = self._client.models.embed_content(
             model=self.model,
             contents=texts,
         )
-
-        # Handle both single and batch embeddings
-        embeddings = result.embeddings
-        if embeddings and hasattr(embeddings[0], "values"):
-            embedding_list = [e.values for e in embeddings]
-        else:
-            embedding_list = embeddings
-
-        return EmbeddingResponse(
-            embeddings=embedding_list,
-            input_tokens=0,
-            model=self.model,
-        )
+        embeddings = [e.values for e in result.embeddings]
+        return embeddings[0] if len(embeddings) == 1 else embeddings

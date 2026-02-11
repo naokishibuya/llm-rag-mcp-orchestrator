@@ -1,9 +1,26 @@
+import logging
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.api import router
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+from backend.api import orchestrator, router
 
 
-app = FastAPI(title="LLM RAG Chat API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await orchestrator.initialize()
+    yield
+    await orchestrator.shutdown()
+
+
+app = FastAPI(title="LLM RAG MCP Orchestrator API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,20 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const API_BASE = 'http://localhost:8000';
+
+type ReflectionInfo = {
+  action: string;
+  score: number;
+  feedback: string;
+};
 
 type Metrics = {
   input_tokens?: number;
   output_tokens?: number;
   cost?: number;
-  tool?: string;
+  tools_used?: string[];
+  model?: string;
+  latency_ms?: number;
+  error?: string;
+  reflection?: ReflectionInfo;
 };
 
 type ModerationInfo = {
   verdict: string;
-  severity: string;
-  categories: string[];
-  rationale?: string | null;
+  reason?: string | null;
 };
 
 type ChatResponse = {
@@ -43,13 +53,18 @@ type ChatProps = {
 function Metadata({ meta }: { meta: ResponseMeta }) {
   const parts: string[] = [];
 
+  // Show intent (now inferred from tools used)
   parts.push(`Intent: ${meta.intent}`);
   parts.push(`Permission: ${meta.moderation.verdict}`);
 
-  if (meta.metrics.tool) {
-    parts.push(`Tool: ${meta.metrics.tool}`);
-  } else if (meta.embedding_model) {
-    parts.push(`Embedding: ${meta.embedding_model}`);
+  // Show tools used
+  if (meta.metrics.tools_used && meta.metrics.tools_used.length > 0) {
+    parts.push(`Tools: ${meta.metrics.tools_used.join(', ')}`);
+  }
+
+  // Show model
+  if (meta.metrics.model) {
+    parts.push(`Model: ${meta.metrics.model}`);
   }
 
   if (meta.metrics.input_tokens !== undefined) {
@@ -63,9 +78,29 @@ function Metadata({ meta }: { meta: ResponseMeta }) {
     parts.push(`Cost: ${costStr}`);
   }
 
+  if (meta.metrics.latency_ms !== undefined) {
+    parts.push(`Latency: ${meta.metrics.latency_ms.toFixed(0)}ms`);
+  }
+
+  if (meta.metrics.reflection) {
+    const r = meta.metrics.reflection;
+    const score = r.score != null ? ` (${r.score.toFixed(1)})` : '';
+    parts.push(`Reflected: ${r.action}${score}`);
+  }
+
   return (
     <div className="mt-2 pt-2 border-t border-gray-300 text-xs text-gray-500">
       {parts.join(' | ')}
+      {meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
+        <div className="mt-1 text-orange-600">
+          Reason: {meta.moderation.reason}
+        </div>
+      )}
+      {meta.metrics.error && (
+        <div className="mt-1 text-orange-600">
+          Error: {meta.metrics.error}
+        </div>
+      )}
     </div>
   );
 }
@@ -74,6 +109,7 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [useReflection, setUseReflection] = useState(true);
 
   const lastMsgRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -98,7 +134,8 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
       const res = await axios.post<ChatResponse>(`${API_BASE}/chat`, {
         messages: payloadMessages,
         model,
-        embedding_model: embeddingModel
+        embedding_model: embeddingModel,
+        use_reflection: useReflection
       });
       const { answer, ...meta } = res.data;
       setMessages([...updatedMessages, { role: 'assistant', content: answer, meta }]);
@@ -112,11 +149,24 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
   const clearChat = () => setMessages([]);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-xl flex flex-col">
+    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-3xl flex flex-col flex-1 min-h-0 max-h-[calc(100vh-10rem)]">
       <div className="flex justify-between items-center mb-2">
-        <span className="text-sm text-gray-500">
-          {messages.length > 0 ? `${messages.length} messages` : ''}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-500">
+            {messages.length > 0 ? `${messages.length} messages` : ''}
+          </span>
+          <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useReflection}
+              onChange={(e) => setUseReflection(e.target.checked)}
+              className="w-3 h-3"
+            />
+            <span title="Enable self-reflection (agent critiques and may revise its answer)">
+              Reflect
+            </span>
+          </label>
+        </div>
         {messages.length > 0 && (
           <button
             onClick={clearChat}
@@ -126,11 +176,11 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
           </button>
         )}
       </div>
-      <div className="flex-grow overflow-y-auto h-[400px] p-4 bg-gray-50 rounded-lg border mb-4">
+      <div className="flex-grow overflow-y-auto min-h-0 p-4 bg-gray-50 rounded-lg border mb-4">
         {messages.length === 0 && (
           <div className="text-gray-400 text-center">
             <p>Start the conversation!</p>
-            <p className="text-xs mt-2">Try: "What is RAG?" or "AAPL stock price"</p>
+            <p className="text-xs mt-2">Try: "What is RAG?" or "AAPL stock price" or both!</p>
           </div>
         )}
         {messages.map((msg, idx) => (
@@ -144,7 +194,13 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
                 msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'
               }`}
             >
-              <div>{msg.content}</div>
+              {msg.role === 'assistant' ? (
+                <div className="prose prose-sm max-w-none">
+                  <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              )}
               {msg.role === 'assistant' && msg.meta && (
                 <Metadata meta={msg.meta} />
               )}

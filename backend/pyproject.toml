@@ -2,7 +2,7 @@
 name = "llm-rag-chat"
 version = "0.1.0"
 description = "LLM RAG Chat Demo with multi-provider support"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"  # avoid pydantic v1 compatibility warning
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.35.0",
@@ -14,15 +14,18 @@ dependencies = [
     "mcp>=1.16.0",
     "ollama>=0.4.0",
     "tqdm>=4.66.0",
-    "google-genai>=1.0.0",
     "python-dotenv>=1.0.0",
+    # LangGraph for model-agnostic orchestration
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
-    "ruff>=0.8.0",
+    "ruff>=0.15.0",
 ]
 
 [build-system]
