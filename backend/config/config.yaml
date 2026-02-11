@@ -17,12 +17,9 @@ rag:
   model: qwen2.5:7b
   temperature: 0.0
 
-embeddings:
-  - class: backend.llm.ollama.OllamaEmbeddings
-    model: nomic-embed-text
-  - class: backend.llm.gemini.GeminiEmbeddings
-    model: text-embedding-004
-    api_key_env: GEMINI_API_KEY
+embedding:
+  class: backend.llm.ollama.OllamaEmbeddings
+  model: nomic-embed-text
 
 orchestrator:
   class: backend.llm.ollama.OllamaChat
@@ -37,9 +34,6 @@ pricing:
     input: 0.30  # $ per 1M tokens
     output: 2.50
   nomic-embed-text:
-    input: 0.00
-    output: 0.00
-  text-embedding-004:
     input: 0.00
     output: 0.00
 

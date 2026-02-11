@@ -7,19 +7,26 @@ const API_BASE = 'http://localhost:8000';
 
 type ReflectionInfo = {
   action: string;
-  score: number;
+  score: number | null;
   feedback: string;
-};
-
-type Metrics = {
   input_tokens?: number;
   output_tokens?: number;
-  cost?: number;
-  tools_used?: string[];
-  model?: string;
-  latency_ms?: number;
-  error?: string;
-  reflection?: ReflectionInfo;
+};
+
+type IntentMetrics = {
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
+  tools_used: string[];
+  reflection: ReflectionInfo | null;
+};
+
+type IntentResult = {
+  answer: string;
+  intent: string;
+  agent: string;
+  model: string;
+  metrics: IntentMetrics;
 };
 
 type ModerationInfo = {
@@ -27,17 +34,23 @@ type ModerationInfo = {
   reason?: string | null;
 };
 
-type ChatResponse = {
-  answer: string;
-  intent: string;
-  model: string;
-  embedding_model: string;
-  routing_rationale?: string | null;
-  moderation: ModerationInfo;
-  metrics: Metrics;
+type RouterInfo = {
+  input_tokens: number;
+  output_tokens: number;
+  cost: number;
 };
 
-type ResponseMeta = Omit<ChatResponse, 'answer'>;
+type ChatResponse = {
+  results: IntentResult[];
+  moderation: ModerationInfo;
+  router: RouterInfo;
+};
+
+type ResponseMeta = {
+  results: IntentResult[];
+  moderation: ModerationInfo;
+  router: RouterInfo;
+};
 
 type Message = {
   role: 'user' | 'assistant';
@@ -47,43 +60,25 @@ type Message = {
 
 type ChatProps = {
   model: string;
-  embeddingModel: string;
 };
 
-function Metadata({ meta }: { meta: ResponseMeta }) {
+function IntentMetadata({ result }: { result: IntentResult }) {
   const parts: string[] = [];
+  parts.push(`Intent: ${result.intent}`);
+  parts.push(`Model: ${result.model}`);
+  parts.push(`Tokens: ${result.metrics.input_tokens}/${result.metrics.output_tokens}`);
 
-  // Show intent (now inferred from tools used)
-  parts.push(`Intent: ${meta.intent}`);
-  parts.push(`Permission: ${meta.moderation.verdict}`);
+  const costStr = result.metrics.cost === 0
+    ? '$0.00 (free)'
+    : `$${result.metrics.cost.toFixed(6)}`;
+  parts.push(`Cost: ${costStr}`);
 
-  // Show tools used
-  if (meta.metrics.tools_used && meta.metrics.tools_used.length > 0) {
-    parts.push(`Tools: ${meta.metrics.tools_used.join(', ')}`);
+  if (result.metrics.tools_used && result.metrics.tools_used.length > 0) {
+    parts.push(`Tools: ${result.metrics.tools_used.join(', ')}`);
   }
 
-  // Show model
-  if (meta.metrics.model) {
-    parts.push(`Model: ${meta.metrics.model}`);
-  }
-
-  if (meta.metrics.input_tokens !== undefined) {
-    parts.push(`Tokens: ${meta.metrics.input_tokens}/${meta.metrics.output_tokens}`);
-  }
-
-  if (meta.metrics.cost !== undefined) {
-    const costStr = meta.metrics.cost === 0
-      ? '$0.00 (free)'
-      : `$${meta.metrics.cost.toFixed(6)}`;
-    parts.push(`Cost: ${costStr}`);
-  }
-
-  if (meta.metrics.latency_ms !== undefined) {
-    parts.push(`Latency: ${meta.metrics.latency_ms.toFixed(0)}ms`);
-  }
-
-  if (meta.metrics.reflection) {
-    const r = meta.metrics.reflection;
+  if (result.metrics.reflection) {
+    const r = result.metrics.reflection;
     const score = r.score != null ? ` (${r.score.toFixed(1)})` : '';
     parts.push(`Reflected: ${r.action}${score}`);
   }
@@ -91,21 +86,68 @@ function Metadata({ meta }: { meta: ResponseMeta }) {
   return (
     <div className="mt-2 pt-2 border-t border-gray-300 text-xs text-gray-500">
       {parts.join(' | ')}
-      {meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
-        <div className="mt-1 text-orange-600">
-          Reason: {meta.moderation.reason}
-        </div>
-      )}
-      {meta.metrics.error && (
-        <div className="mt-1 text-orange-600">
-          Error: {meta.metrics.error}
-        </div>
+      {result.metrics.reflection && (
+        <details className="mt-1">
+          <summary className="cursor-pointer hover:text-gray-700">Reflection details</summary>
+          <div className="mt-1 pl-2 border-l-2 border-gray-300">
+            <div>Action: {result.metrics.reflection.action}</div>
+            {result.metrics.reflection.score != null && (
+              <div>Score: {result.metrics.reflection.score.toFixed(2)}</div>
+            )}
+            {result.metrics.reflection.feedback && (
+              <div>Feedback: {result.metrics.reflection.feedback}</div>
+            )}
+            {(result.metrics.reflection.input_tokens || result.metrics.reflection.output_tokens) ? (
+              <div>Reflection tokens: {result.metrics.reflection.input_tokens ?? 0}/{result.metrics.reflection.output_tokens ?? 0}</div>
+            ) : null}
+          </div>
+        </details>
       )}
     </div>
   );
 }
 
-export default function ChatComponent({ model, embeddingModel }: ChatProps) {
+function AssistantMessage({ content, meta }: { content: string; meta?: ResponseMeta }) {
+  if (!meta || meta.results.length <= 1) {
+    // Single intent: one markdown block + one metadata line (same as before)
+    return (
+      <>
+        <div className="prose prose-sm max-w-none">
+          <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+        </div>
+        {meta && meta.results.length === 1 && (
+          <IntentMetadata result={meta.results[0]} />
+        )}
+        {meta && meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
+          <div className="mt-1 text-xs text-orange-600">
+            Moderation: {meta.moderation.reason}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // Multi-intent: each sub-result separated with its own metadata
+  return (
+    <>
+      {meta.results.map((result, i) => (
+        <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
+          <div className="prose prose-sm max-w-none">
+            <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
+          </div>
+          <IntentMetadata result={result} />
+        </div>
+      ))}
+      {meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
+        <div className="mt-2 text-xs text-orange-600">
+          Moderation: {meta.moderation.reason}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function ChatComponent({ model }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -134,11 +176,16 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
       const res = await axios.post<ChatResponse>(`${API_BASE}/chat`, {
         messages: payloadMessages,
         model,
-        embedding_model: embeddingModel,
         use_reflection: useReflection
       });
-      const { answer, ...meta } = res.data;
-      setMessages([...updatedMessages, { role: 'assistant', content: answer, meta }]);
+      const data = res.data;
+      const content = data.results.map(r => r.answer).join('\n\n');
+      const meta: ResponseMeta = {
+        results: data.results,
+        moderation: data.moderation,
+        router: data.router,
+      };
+      setMessages([...updatedMessages, { role: 'assistant', content, meta }]);
     } catch {
       setMessages([...updatedMessages, { role: 'assistant', content: 'Error contacting backend.' }]);
     } finally {
@@ -149,7 +196,7 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
   const clearChat = () => setMessages([]);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-3xl flex flex-col flex-1 min-h-0 max-h-[calc(100vh-10rem)]">
+    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-4xl flex flex-col flex-1 min-h-0 max-h-[calc(100vh-10rem)]">
       <div className="flex justify-between items-center mb-2">
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-500">
@@ -195,14 +242,9 @@ export default function ChatComponent({ model, embeddingModel }: ChatProps) {
               }`}
             >
               {msg.role === 'assistant' ? (
-                <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
-                </div>
+                <AssistantMessage content={msg.content} meta={msg.meta} />
               ) : (
                 <div className="whitespace-pre-wrap">{msg.content}</div>
-              )}
-              {msg.role === 'assistant' && msg.meta && (
-                <Metadata meta={msg.meta} />
               )}
             </div>
           </div>

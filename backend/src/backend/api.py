@@ -28,7 +28,6 @@ class MessageModel(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[MessageModel]
     model: str | None = None
-    embedding_model: str | None = None
     use_reflection: bool = True
 
 
@@ -39,11 +38,6 @@ async def get_models():
     return {"models": config.list_talk_models()}
 
 
-@router.get("/embeddings")
-async def get_embeddings():
-    return {"embeddings": config.list_embedding_models()}
-
-
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """Multi-turn chat endpoint using LangGraph orchestration."""
@@ -52,10 +46,8 @@ async def chat(request: ChatRequest):
 
     # Get models
     models = config.list_talk_models()
-    embeddings = config.list_embedding_models()
 
     model_name = request.model or (models[0] if models else "qwen2.5:7b")
-    embedding_model = request.embedding_model or (embeddings[0] if embeddings else "nomic-embed-text")
 
     # Extract query and history
     query = request.messages[-1].content
@@ -66,45 +58,63 @@ async def chat(request: ChatRequest):
         query=query,
         history=history,
         model_name=model_name,
-        embedding_model=embedding_model,
         use_reflection=request.use_reflection,
     )
 
-    # Calculate cost
-    input_tokens = final_state.get("input_tokens", 0)
-    output_tokens = final_state.get("output_tokens", 0)
-    cost = pricer.calc_cost(model_name, input_tokens, output_tokens)
+    # Build per-intent results
+    intent_results = final_state.get("intent_results", [])
+    results = []
+    for ir in intent_results:
+        ir_model = ir.get("model") or model_name
+        ir_in = ir.get("input_tokens", 0)
+        ir_out = ir.get("output_tokens", 0)
+        cost = pricer.calc_cost(ir_model, ir_in, ir_out)
 
-    # Build metrics
-    intents_processed = final_state.get("intents", [])
-    metrics = {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cost": round(cost, 6),
-        "model": model_name,
-        "tools_used": list(final_state.get("tool_results", {}).keys()),
-        "intents_processed": [i["intent"] for i in intents_processed],
-        "agents_used": [i["agent"] for i in intents_processed],
-    }
+        reflection = ir.get("reflection")
+        if reflection:
+            ref_model = final_state.get("orchestrator_model")
+            ref_model_name = ref_model.model if ref_model else model_name
+            cost += pricer.calc_cost(
+                ref_model_name,
+                reflection.get("input_tokens", 0),
+                reflection.get("output_tokens", 0),
+            )
 
-    # Add reflection info if used
-    if request.use_reflection and final_state.get("reflection_feedback"):
-        feedback = final_state["reflection_feedback"]
-        metrics["reflection"] = {
-            "count": final_state.get("reflection_count", 0),
-            "action": feedback.get("action", ""),
-            "score": feedback.get("score", 0),
-            "feedback": feedback.get("feedback", ""),
-        }
+        results.append({
+            "answer": ir.get("answer", ""),
+            "intent": ir.get("intent", "chat"),
+            "agent": ir.get("agent", ""),
+            "model": ir_model,
+            "metrics": {
+                "input_tokens": ir_in,
+                "output_tokens": ir_out,
+                "cost": round(cost, 6),
+                "tools_used": ir.get("tools_used", []),
+                "reflection": reflection,
+            },
+        })
+
+    # Router cost
+    router_in = final_state.get("router_input_tokens", 0)
+    router_out = final_state.get("router_output_tokens", 0)
+    orch_model = final_state.get("orchestrator_model")
+    router_model_name = orch_model.model if orch_model else model_name
+    router_cost = pricer.calc_cost(router_model_name, router_in, router_out)
+
+    is_blocked = final_state.get("is_blocked", False)
+    verdict = "block" if is_blocked else "allow"
+    if not is_blocked and final_state.get("moderation_reason"):
+        verdict = "warn"
 
     return {
-        "answer": final_state.get("final_answer", ""),
-        "intent": intents_processed[0]["intent"] if intents_processed else "chat",
+        "results": results,
         "moderation": {
-            "verdict": final_state.get("moderation_verdict", "allow"),
+            "verdict": verdict,
             "reason": final_state.get("moderation_reason"),
         },
-        "model": model_name,
-        "embedding_model": embedding_model,
-        "metrics": metrics,
+        "router": {
+            "input_tokens": router_in,
+            "output_tokens": router_out,
+            "cost": round(router_cost, 6),
+        },
     }

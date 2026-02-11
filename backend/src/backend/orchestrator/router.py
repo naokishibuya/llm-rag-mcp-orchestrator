@@ -102,8 +102,8 @@ class Router:
             update={
                 "intents": result.intents,
                 "current_intent_index": 0,
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
+                "router_input_tokens": result.input_tokens,
+                "router_output_tokens": result.output_tokens,
             },
             goto="agent",
         )

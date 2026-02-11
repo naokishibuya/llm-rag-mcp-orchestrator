@@ -50,25 +50,44 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
         model=model,
         history=history,
         params=params,
-        embedder=state["embedder"],
     )
     is_reflection = feedback and feedback.get("action") in ("retry", "reroute")
 
-    # On retry/reroute, replace the last response; otherwise append.
-    responses = list(state.get("intent_responses", []))
-    if is_reflection and responses:
-        responses[-1] = result.response
+    input_tokens = getattr(result, "input_tokens", 0)
+    output_tokens = getattr(result, "output_tokens", 0)
+
+    # Build per-intent result entry
+    entry = {
+        "intent": intent_data.get("intent", "chat"),
+        "agent": agent_name,
+        "model": model.model,
+        "answer": result.response,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "reflection": None,
+        "tools_used": list(state.get("tool_results", {}).keys()),
+    }
+
+    # On retry/reroute, replace the last entry and accumulate tokens from prior attempt.
+    intent_results = list(state.get("intent_results", []))
+    if is_reflection and intent_results:
+        prev = intent_results[-1]
+        entry["input_tokens"] += prev.get("input_tokens", 0)
+        entry["output_tokens"] += prev.get("output_tokens", 0)
+        # Carry forward any accumulated reflection tokens
+        if prev.get("reflection"):
+            entry["input_tokens"] += prev["reflection"].get("input_tokens", 0)
+            entry["output_tokens"] += prev["reflection"].get("output_tokens", 0)
+        intent_results[-1] = entry
     else:
-        responses.append(result.response)
+        intent_results.append(entry)
 
     updates = {
         "agent_response": result.response,
         "agent_success": getattr(result, "success", True),
-        "intent_responses": responses,
+        "intent_results": intent_results,
         "current_intent_index": idx + 1,
         "reflection_feedback": None,
-        "input_tokens": getattr(result, "input_tokens", 0),
-        "output_tokens": getattr(result, "output_tokens", 0),
     }
     if not is_reflection:
         updates["reflection_count"] = 0
@@ -84,19 +103,23 @@ async def _check_next_node(state: dict) -> Command:
 
 
 async def _finalize_node(state: dict) -> Command:
-    responses = state.get("intent_responses", [])
-    if len(responses) == 0:
-        final = state.get("agent_response", "I couldn't process your request.")
-    elif len(responses) == 1:
-        final = responses[0]
-    else:
-        final = "\n\n".join(responses)
-    return Command(update={"final_answer": final}, goto=END)
+    return Command(update={}, goto=END)
 
 
 async def _blocked_node(state: dict) -> Command:
     return Command(
-        update={"final_answer": "I'm sorry, but I can't assist with that request."},
+        update={
+            "intent_results": [{
+                "intent": "blocked",
+                "agent": "Moderator",
+                "model": "",
+                "answer": "I'm sorry, but I can't assist with that request.",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reflection": None,
+                "tools_used": [],
+            }],
+        },
         goto=END,
     )
 
@@ -115,6 +138,7 @@ class Orchestrator:
         self._orchestrator_model: Chat = self._registry.resolve_model("orchestrator")
         self._rag_model: Chat = self._registry.resolve_model("rag")
         self._mcp_model: Chat = self._registry.resolve_model("mcp")
+        self._embedder = self._registry.resolve_embeddings()
 
     async def initialize(self):
         mcp_client = MCPClient(self._config.mcp_services)
@@ -125,7 +149,7 @@ class Orchestrator:
         # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
         self._agents = {
             "TalkAgent": TalkAgent(),
-            "RAGAgent": RAGAgent(),
+            "RAGAgent": RAGAgent(self._embedder),
         }
 
         # Map agent name → state key for model selection
@@ -218,7 +242,6 @@ class Orchestrator:
         query: str,
         history: list,
         model_name: str,
-        embedding_model: str,
         use_reflection: bool = False,
     ) -> dict:
         if not self._graph:
@@ -227,7 +250,6 @@ class Orchestrator:
         await self._refresh_services()
 
         model = self._registry.get_talk_model(model_name)
-        embedder = self._registry.get_embeddings(embedding_model)
 
         initial_state = {
             # Input
@@ -237,7 +259,6 @@ class Orchestrator:
             "orchestrator_model": self._orchestrator_model,
             "rag_model": self._rag_model,
             "mcp_model": self._mcp_model,
-            "embedder": embedder,
             "use_reflection": use_reflection,
             "max_reflections": 2,
             # Multi-intent
@@ -246,19 +267,17 @@ class Orchestrator:
             # Execution
             "agent_response": "",
             "agent_success": True,
-            "intent_responses": [],
+            "intent_results": [],
             "tool_results": {},
             # Reflection
             "reflection_count": 0,
             "reflection_feedback": None,
-            # Tokens (initialized for add reducer)
-            "input_tokens": 0,
-            "output_tokens": 0,
+            # Router token tracking
+            "router_input_tokens": 0,
+            "router_output_tokens": 0,
             # Safety
             "is_blocked": False,
             "moderation_reason": None,
-            # Output
-            "final_answer": "",
         }
 
         return await self._graph.ainvoke(initial_state)
