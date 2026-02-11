@@ -54,14 +54,19 @@ class MCPClient:
 
     async def _connect_one(self, name: str):
         cfg = self._configs[name]
+        client = Client(StreamableHttpTransport(url=cfg["url"]))
         try:
-            transport = StreamableHttpTransport(url=cfg["url"])
-            client = Client(transport)
             await client.__aenter__()
             self._clients[name] = client
             logger.info(f"Connected to MCP server: {name}")
         except Exception as e:
             logger.warning(f"Failed to connect to MCP server '{name}': {e}")
+            # Clean up the client's background tasks so asyncio doesn't
+            # log "Task exception was never retrieved" tracebacks.
+            try:
+                await client.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     async def reconnect(self, server: str) -> bool:
         if server in self._clients:

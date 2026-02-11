@@ -7,13 +7,10 @@ from .protocol import Response
 
 
 class GeminiChat:
-    def __init__(self, model: str, temperature: float = 0.5):
+    def __init__(self, model: str, temperature: float = 0.5, api_key_env: str = ""):
         self.model = model
         self.temperature = temperature
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY required")
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
     def chat(self, messages: list[dict[str, str]], schema: type | None = None) -> Response:
         contents, system_instruction = self._build_contents(messages)
@@ -23,7 +20,6 @@ class GeminiChat:
         )
         if schema is not None:
             config.response_mime_type = "application/json"
-            config.response_schema = schema
         response = self._client.models.generate_content(
             model=self.model,
             contents=contents,
@@ -42,9 +38,9 @@ class GeminiChat:
             if role == "system":
                 system_instruction = content
             elif role == "user":
-                contents.append(types.Content(role="user", parts=[types.Part.from_text(content)]))
+                contents.append(types.Content(role="user", parts=[types.Part(text=content)]))
             else:
-                contents.append(types.Content(role="model", parts=[types.Part.from_text(content)]))
+                contents.append(types.Content(role="model", parts=[types.Part(text=content)]))
         return contents, system_instruction
 
     def _to_response(self, response) -> Response:
@@ -56,13 +52,23 @@ class GeminiChat:
         )
 
 
-class GeminiEmbeddings:
-    def __init__(self, model: str = "text-embedding-004"):
-        self.model = model
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+def _resolve_api_key(api_key_env: str = "") -> str:
+    if api_key_env:
+        api_key = os.environ.get(api_key_env)
         if not api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY required")
-        self._client = genai.Client(api_key=api_key)
+            raise ValueError(f"{api_key_env} is not set")
+        return api_key
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is required")
+    return api_key
+
+
+
+class GeminiEmbeddings:
+    def __init__(self, model: str = "text-embedding-004", api_key_env: str = ""):
+        self.model = model
+        self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
     def embed(self, texts: list[str] | str) -> list[list[float]] | list[float]:
         if isinstance(texts, str):

@@ -2,9 +2,9 @@ from ..llm import Chat, Embeddings
 from .client import RAGClient, RAGResult
 
 
-SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
+SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided context from the knowledge base.
 
-Use the context to answer the user's question. If the context doesn't contain relevant information, say so clearly.
+Use the context to answer the user's question. If the context doesn't contain relevant information, say so clearly — do not answer from conversation history or general knowledge.
 Be concise and accurate. Cite the source if available."""
 
 

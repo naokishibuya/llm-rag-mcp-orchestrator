@@ -35,9 +35,12 @@ class Registry:
         return embeddings
 
 
+_CONFIG_ONLY_KEYS = {"class"}
+
+
 def _load_class(cfg: dict) -> type:
     class_path = cfg["class"]
     module_path, class_name = class_path.rsplit(".", 1)
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
-    return cls(**{k: v for k, v in cfg.items() if k != "class"})
+    return cls(**{k: v for k, v in cfg.items() if k not in _CONFIG_ONLY_KEYS})

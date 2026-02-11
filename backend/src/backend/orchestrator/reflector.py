@@ -114,9 +114,8 @@ class Reflector:
             ]
             updates["current_intent_index"] = idx
         elif result.action == "reroute":
-            reflection_feedback["query"] = (
-                f"Previous routing was incorrect. Feedback: {result.feedback}"
-            )
+            reflection_feedback["query"] = state["query"]
+            reflection_feedback["exclude_agent"] = intent_data.get("agent")
 
         updates["reflection_feedback"] = reflection_feedback
 
@@ -155,7 +154,8 @@ class Reflector:
         ]
 
         response = model.chat(messages)
-        reflection = self._parse_reflection(response.text)
+        logger.debug(f"Reflector raw response: {response.text}")
+        reflection = self._parse_reflection(response.text, agent_success)
 
         logger.info(
             f"Reflection on {delegated_agent}/{intent}: "
@@ -172,7 +172,7 @@ class Reflector:
             output_tokens=response.output_tokens,
         )
 
-    def _parse_reflection(self, text: str) -> dict:
+    def _parse_reflection(self, text: str, agent_success: bool = True) -> dict:
         try:
             text = text.strip()
             if "```" in text:
@@ -195,8 +195,10 @@ class Reflector:
             }
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to parse reflection: {e}")
+            # If the agent already reported failure, reroute instead of accepting.
+            fallback = "reroute" if not agent_success else "accept"
             return {
-                "action": "accept",
+                "action": fallback,
                 "score": None,
                 "feedback": "Reflection parse failed",
                 "suggested_agent": None,
