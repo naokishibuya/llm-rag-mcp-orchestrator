@@ -65,7 +65,7 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "reflection": None,
-        "tools_used": list(state.get("tool_results", {}).keys()),
+        "tools_used": getattr(result, "tools_used", []),
     }
 
     # On retry/reroute, replace the last entry and accumulate tokens from prior attempt.
@@ -94,7 +94,9 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
     if not is_reflection:
         updates["reflection_count"] = 0
 
-    goto = "reflector" if state.get("use_reflection", False) else "check_next"
+    used_tools = getattr(result, "tools_used", [])
+    skip_reflection = intent_data.get("intent") == "smalltalk" and not used_tools
+    goto = "reflector" if state.get("use_reflection", False) and not skip_reflection else "check_next"
     return Command(update=updates, goto=goto)
 
 
@@ -151,17 +153,20 @@ class Orchestrator:
         # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
         self._agents = {
             "TalkAgent": TalkAgent(),
+            "SmalltalkAgent": TalkAgent(), # Same underlying logic
             "RAGAgent": RAGAgent(self._embedder),
         }
 
         # Map agent name → state key for model selection
         agent_models = {
             "TalkAgent": "model",
+            "SmalltalkAgent": "model",
             "RAGAgent": "rag_model",
         }
 
         routing: dict[str, RoutingMeta] = {
-            "TalkAgent": RoutingMeta("chat", "General conversation, greetings", {}),
+            "TalkAgent": RoutingMeta("chat", "Complex general knowledge questions, explanations, or creative writing", {}),
+            "SmalltalkAgent": RoutingMeta("smalltalk", "Simple greetings, social pleasantries, or very brief small talk", {}),
             "RAGAgent": RoutingMeta("rag", "Knowledge base / documentation questions", {"query": "question"}),
         }
 
@@ -265,7 +270,6 @@ class Orchestrator:
             "agent_response": "",
             "agent_success": True,
             "intent_results": [],
-            "tool_results": {},
             # Reflection
             "reflection_count": 0,
             "reflection_feedback": None,

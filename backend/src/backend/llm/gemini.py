@@ -12,12 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiChat:
-    def __init__(self, model: str, temperature: float = 0.5, api_key_env: str = ""):
+    def __init__(self, model: str, temperature: float = 0.5, api_key_env: str = "", max_tool_rounds: int = 3):
         self.model = model
         self.temperature = temperature
+        self.max_tool_rounds = max_tool_rounds
         self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
-    def chat(self, messages: list[dict[str, str]], schema: type | None = None) -> Response:
+    def chat(self, messages: list[dict[str, str]], schema: type | None = None, tools: dict[str, callable] | None = None) -> Response:
         contents, system_instruction = self._build_contents(messages)
         config = types.GenerateContentConfig(
             temperature=self.temperature,
@@ -26,6 +27,11 @@ class GeminiChat:
         if schema is not None:
             config.response_mime_type = "application/json"
             config.response_json_schema = schema.model_json_schema()
+        elif tools:
+            config.tools = list(tools.values())
+            config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
+                maximum_remote_calls=self.max_tool_rounds,
+            )
         try:
             response = self._client.models.generate_content(
                 model=self.model,
@@ -38,7 +44,9 @@ class GeminiChat:
         except Exception as e:
             logger.warning(f"Gemini unexpected error: {e}")
             return Response(text=f"[Gemini error: {e}]", model=self.model)
-        return self._to_response(response)
+        resp = self._to_response(response)
+        resp.tools_used = self._extract_tool_calls(response)
+        return resp
 
     def _build_contents(
         self, messages: list[dict[str, str]]
@@ -63,6 +71,18 @@ class GeminiChat:
             output_tokens=response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
             model=self.model,
         )
+
+    @staticmethod
+    def _extract_tool_calls(response) -> list[str]:
+        history = getattr(response, "automatic_function_calling_history", None)
+        if not history:
+            return []
+        return [
+            part.function_call.name
+            for content in history
+            for part in (content.parts or [])
+            if getattr(part, "function_call", None)
+        ]
 
 
 def _resolve_api_key(api_key_env: str = "") -> str:

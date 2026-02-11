@@ -34,6 +34,7 @@ Critical checks:
 - If Agent Success is false, the agent could not handle this query. Recommend "reroute" to a more suitable agent.
 - If the response suggests code or manual steps instead of providing actual data, it likely failed. Recommend "reroute".
 - If the response confidently states facts that weren't retrieved from a tool or knowledge base, it may be hallucinating.
+- MATH FORMATTING: If the response uses \(, \), \[, or \] for LaTeX, it is INVALID. Recommend "retry" with feedback: "Use $...$ and $$...$$ for math. Delimiters \( \) and \[ \] are not supported."
 
 Respond with JSON:
 {{
@@ -93,14 +94,19 @@ class Reflector:
             agent_success=state.get("agent_success", True),
         )
 
-        # For multi-intent queries, don't retry individual intents —
-        # the next intent in the queue may provide a better answer.
-        if len(state.get("intents", [])) > 1 and result.action == "retry":
-            logger.info("Multi-intent query: converting retry to accept")
-            result = ReflectionResult(
-                action="accept", score=result.score, feedback=result.feedback,
-                input_tokens=result.input_tokens, output_tokens=result.output_tokens,
-            )
+        # For multi-intent queries, we allow reroute (to fix hallucinated tools)
+        # but convert retry to reroute-to-chat to ensure we don't loop forever
+        # on a single intent's details.
+        if len(state.get("intents", [])) > 1:
+            if result.action == "retry":
+                logger.info("Multi-intent query: converting retry to reroute(TalkAgent)")
+                result = ReflectionResult(
+                    action="reroute", score=result.score, feedback=result.feedback,
+                    suggested_agent="TalkAgent",
+                    input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                )
+            elif result.action == "reroute":
+                logger.info(f"Multi-intent query: allowing reroute from {intent_data.get('agent')}")
 
         reflection_feedback = {
             "action": result.action,

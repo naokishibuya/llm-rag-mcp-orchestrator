@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -64,6 +67,11 @@ type Message = {
   meta?: ResponseMeta;
   thinking?: ThinkingStep[];
   isStreaming?: boolean;
+};
+
+type UserContext = {
+  city: string;
+  timezone: string;
 };
 
 type ChatProps = {
@@ -167,7 +175,7 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
             <>
               {content && (
                 <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{content}</Markdown>
                 </div>
               )}
               {meta && <ChainMetadata meta={meta} />}
@@ -185,7 +193,7 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
             {meta.results.map((result, i) => (
               <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
                 <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{result.answer}</Markdown>
                 </div>
               </div>
             ))}
@@ -207,6 +215,11 @@ export default function ChatComponent({ model }: ChatProps) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [useReflection, setUseReflection] = useState(true);
+  const [userContext] = useState<UserContext>(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const city = tz.split('/').pop()!.replace(/_/g, ' ');
+    return { city, timezone: tz };
+  });
 
   const lastMsgRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -245,6 +258,14 @@ export default function ChatComponent({ model }: ChatProps) {
           messages: payloadMessages,
           model,
           use_reflection: useReflection,
+          user_context: {
+            ...userContext,
+            local_time: new Intl.DateTimeFormat('en-US', {
+              timeZone: userContext.timezone,
+              dateStyle: 'full',
+              timeStyle: 'short',
+            }).format(new Date()),
+          },
         }),
       });
 

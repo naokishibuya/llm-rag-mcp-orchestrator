@@ -31,10 +31,33 @@ class MessageModel(BaseModel):
     content: str
 
 
+class UserContext(BaseModel):
+    city: str | None = None
+    timezone: str | None = None
+    local_time: str | None = None
+
+
 class ChatRequest(BaseModel):
     messages: list[MessageModel]
     model: str | None = None
     use_reflection: bool = True
+    user_context: UserContext | None = None
+
+
+def _build_context_message(uctx: UserContext | None) -> dict | None:
+    """Build a system message from user context, or None if empty."""
+    if not uctx:
+        return None
+    parts = []
+    if uctx.city:
+        parts.append(uctx.city)
+    if uctx.local_time:
+        parts.append(uctx.local_time)
+    if uctx.timezone:
+        parts.append(f"({uctx.timezone})")
+    if not parts:
+        return None
+    return {"role": "system", "content": "User context: " + " ".join(parts)}
 
 
 # === Endpoints ===
@@ -58,6 +81,10 @@ async def chat(request: ChatRequest):
     # Extract query and history
     query = request.messages[-1].content
     history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
+
+    ctx_msg = _build_context_message(request.user_context)
+    if ctx_msg:
+        history = [ctx_msg] + history
 
     # Invoke orchestrator
     final_state = await orchestrator.invoke(
@@ -178,6 +205,10 @@ async def chat_stream(request: ChatRequest):
     query = request.messages[-1].content
     history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
 
+    ctx_msg = _build_context_message(request.user_context)
+    if ctx_msg:
+        history = [ctx_msg] + history
+
     async def event_generator():
         # Accumulated state for cost calculation at the end
         acc = {
@@ -234,6 +265,8 @@ async def chat_stream(request: ChatRequest):
                     if intent_results:
                         latest = intent_results[-1]
                         intent = latest.get("intent", "?")
+                        for tool_name in latest.get("tools_used", []):
+                            yield _sse({"type": "thinking", "step": f"Tool: {tool_name}"})
                         step_in = updates.get("step_input_tokens", 0)
                         step_out = updates.get("step_output_tokens", 0)
                         yield _sse({
@@ -276,7 +309,7 @@ async def chat_stream(request: ChatRequest):
                     if len(final_results) > 1:
                         good = [
                             r for r in final_results
-                            if (r.get("reflection") or {}).get("score", 1.0) >= 0.7
+                            if ((r.get("reflection") or {}).get("score") or 1.0) >= 0.7
                         ]
                         if good:
                             dropped = len(final_results) - len(good)

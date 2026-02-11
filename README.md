@@ -21,6 +21,23 @@ User ─► React UI ─► FastAPI ─► Orchestrator (LangGraph)
 
 The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
 
+### Thinking UI & Reflection
+
+The UI streams orchestration steps in real time via SSE — routing decisions, agent outputs, and reflection evaluations appear as they happen. The thinking section auto-collapses once the final answer arrives.
+
+<img src="images/thinking-ui.png" alt="Thinking UI showing orchestration steps" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+
+### Native Tool Calling
+
+The Talker agent supports LLM tool calling — tools are passed directly to the model and invoked automatically. Currently includes a sandboxed calculator; each tool call appears as a thinking step.
+
+<img src="images/tooluse.png" alt="Tool calling with calculator" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+
+### Model Notes
+
+- **Gemini** follows tool-calling and formatting instructions more reliably but is subject to API rate limits on the free tier.
+- **Ollama** (local) models like qwen2.5:7b may ignore formatting instructions (e.g. LaTeX delimiters) or produce less accurate routing. Larger local models generally perform better.
+
 ## Quick Start
 
 ### Prerequisites
