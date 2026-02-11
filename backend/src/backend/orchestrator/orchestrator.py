@@ -88,6 +88,8 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
         "intent_results": intent_results,
         "current_intent_index": idx + 1,
         "reflection_feedback": None,
+        "step_input_tokens": input_tokens,
+        "step_output_tokens": output_tokens,
     }
     if not is_reflection:
         updates["reflection_count"] = 0
@@ -237,13 +239,8 @@ class Orchestrator:
         if new_routing:
             self._router.add_routes(new_routing)
 
-    async def invoke(
-        self,
-        query: str,
-        history: list,
-        model_name: str,
-        use_reflection: bool = False,
-    ) -> dict:
+    async def _prepare(self, query: str, history: list, model_name: str, use_reflection: bool) -> dict:
+        """Build the initial state dict shared by invoke() and stream()."""
         if not self._graph:
             raise RuntimeError("Orchestrator not initialized. Call initialize() first.")
 
@@ -251,7 +248,7 @@ class Orchestrator:
 
         model = self._registry.get_talk_model(model_name)
 
-        initial_state = {
+        return {
             # Input
             "query": query,
             "history": history,
@@ -280,4 +277,25 @@ class Orchestrator:
             "moderation_reason": None,
         }
 
+    async def invoke(
+        self,
+        query: str,
+        history: list,
+        model_name: str,
+        use_reflection: bool = False,
+    ) -> dict:
+        initial_state = await self._prepare(query, history, model_name, use_reflection)
         return await self._graph.ainvoke(initial_state)
+
+    async def stream(
+        self,
+        query: str,
+        history: list,
+        model_name: str,
+        use_reflection: bool = False,
+    ):
+        """Async generator yielding (node_name, updates) for each graph step."""
+        initial_state = await self._prepare(query, history, model_name, use_reflection)
+        async for event in self._graph.astream(initial_state, stream_mode="updates"):
+            for node_name, updates in event.items():
+                yield node_name, updates or {}

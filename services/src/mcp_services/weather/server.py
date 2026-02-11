@@ -47,6 +47,7 @@ mcp = FastMCP(APP_NAME, instructions=INSTRUCTIONS)
 
 @mcp.tool
 async def get_weather(city: str) -> dict:
+    """Get current weather conditions for a city (e.g. New York, London, Tokyo). Returns temperature, humidity, wind speed, and conditions."""
     coords = await _geocode(city)
     if not coords:
         return {"city": city, "error": f"Could not find location: {city}"}
