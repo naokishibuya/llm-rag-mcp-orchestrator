@@ -1,9 +1,14 @@
+import logging
 import os
 
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
 from .protocol import Response
+
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiChat:
@@ -20,11 +25,19 @@ class GeminiChat:
         )
         if schema is not None:
             config.response_mime_type = "application/json"
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=config,
-        )
+            config.response_json_schema = schema.model_json_schema()
+        try:
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+        except APIError as e:
+            logger.warning(f"Gemini API error: {e.code} {e.message}")
+            return Response(text=f"[Gemini error: {e.message}]", model=self.model)
+        except Exception as e:
+            logger.warning(f"Gemini unexpected error: {e}")
+            return Response(text=f"[Gemini error: {e}]", model=self.model)
         return self._to_response(response)
 
     def _build_contents(
