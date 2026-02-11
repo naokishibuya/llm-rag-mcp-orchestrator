@@ -10,16 +10,26 @@ class Registry:
         self._chat_model_cache: dict[str, Chat] = {}
         self._embeddings_cache: dict[str, Embeddings] = {}
 
-    def get_chat_model(self, model: str) -> Chat:
+    def get_talk_model(self, model: str) -> Chat:
         if model in self._chat_model_cache:
             return self._chat_model_cache[model]
 
-        cfg = self._config.find_chat_model(model)
+        cfg = self._config.find_talk_model(model)
         if not cfg:
-            raise ValueError(f"Unknown chat model: {model}")
+            raise ValueError(f"Unknown talk model: {model}")
 
         llm = _load_class(cfg)
         self._chat_model_cache[model] = llm
+        return llm
+
+    def resolve_model(self, key: str) -> Chat:
+        """Resolve a pipeline model by role key (e.g. 'mcp', 'rag', 'orchestrator')."""
+        if key in self._chat_model_cache:
+            return self._chat_model_cache[key]
+
+        cfg = self._config.get_pipeline_model(key)
+        llm = _load_class(cfg)
+        self._chat_model_cache[key] = llm
         return llm
 
     def get_embeddings(self, model: str) -> Embeddings:

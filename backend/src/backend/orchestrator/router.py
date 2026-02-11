@@ -85,7 +85,7 @@ class Router:
             exclude_agent = feedback.get("exclude_agent")
 
         result = await self.execute(
-            model=state["model"],
+            model=state["orchestrator_model"],
             query=query,
             history=state["history"],
         )

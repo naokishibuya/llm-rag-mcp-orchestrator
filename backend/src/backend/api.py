@@ -36,7 +36,7 @@ class ChatRequest(BaseModel):
 
 @router.get("/models")
 async def get_models():
-    return {"models": config.list_chat_models()}
+    return {"models": config.list_talk_models()}
 
 
 @router.get("/embeddings")
@@ -51,7 +51,7 @@ async def chat(request: ChatRequest):
         return {"answer": "No messages provided", "error": True}
 
     # Get models
-    models = config.list_chat_models()
+    models = config.list_talk_models()
     embeddings = config.list_embedding_models()
 
     model_name = request.model or (models[0] if models else "qwen2.5:7b")

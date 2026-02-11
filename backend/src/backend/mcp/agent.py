@@ -11,9 +11,9 @@ from .handler import MCPHandler
 logger = logging.getLogger(__name__)
 
 
-FORMAT_PROMPT = """Format the following raw tool data into a clear, concise markdown response for the user.
+FORMAT_PROMPT = """Format the following raw tool data into a clear, concise response for the user.
+Only present the data below — do not add disclaimers about missing data or suggest other sources.
 
-User query: {query}
 Tool: {tool_name}
 Raw data:
 {raw_data}

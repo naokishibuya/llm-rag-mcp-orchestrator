@@ -85,7 +85,7 @@ class Reflector:
             intent_query = params.get("query") or state["query"]
 
         result = await self.execute(
-            model=state["model"],
+            model=state["orchestrator_model"],
             query=intent_query,
             agent_response=state["agent_response"],
             delegated_agent=intent_data.get("agent", "TalkAgent"),
