@@ -100,10 +100,27 @@ class Reflector:
             "suggested_agent": result.suggested_agent,
         }
 
+        # Write reflection data into the current intent result
+        intent_results = list(state.get("intent_results", []))
+        if intent_results:
+            prev_reflection = intent_results[-1].get("reflection")
+            # Accumulate reflector tokens across rounds
+            ref_in = result.input_tokens
+            ref_out = result.output_tokens
+            if prev_reflection:
+                ref_in += prev_reflection.get("input_tokens", 0)
+                ref_out += prev_reflection.get("output_tokens", 0)
+            intent_results[-1] = {**intent_results[-1], "reflection": {
+                "action": result.action,
+                "score": result.score,
+                "feedback": result.feedback,
+                "input_tokens": ref_in,
+                "output_tokens": ref_out,
+            }}
+
         updates: dict = {
             "reflection_count": state.get("reflection_count", 0) + 1,
-            "input_tokens": result.input_tokens,
-            "output_tokens": result.output_tokens,
+            "intent_results": intent_results,
         }
 
         if result.action == "retry":

@@ -9,8 +9,9 @@ Be concise and accurate. Cite the source if available."""
 
 
 class RAGAgent:
-    def __init__(self):
+    def __init__(self, embedder: Embeddings):
         self.index = RAGClient()
+        self._embedder = embedder
 
     async def execute(
         self,
@@ -18,14 +19,13 @@ class RAGAgent:
         model: Chat,
         query: str,
         history: list[dict],
-        embedder: Embeddings,
         params: dict = None,
         **_,
     ) -> RAGResult:
         params = params or {}
         search_query = params.get("query", query)
 
-        docs = self.index.search(search_query, embedder, 3)
+        docs = self.index.search(search_query, self._embedder, 3)
 
         if not docs or (docs and docs[0].score < 0.3):
             return RAGResult(
@@ -47,9 +47,8 @@ class RAGAgent:
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "system", "content": f"Context from knowledge base:\n\n{context_text}"},
+            {"role": "user", "content": query},
         ]
-        messages.extend(history)
-        messages.append({"role": "user", "content": query})
 
         response = model.chat(messages)
 

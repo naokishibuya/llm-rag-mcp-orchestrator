@@ -9,7 +9,7 @@ class Config:
             data = yaml.safe_load(f) or {}
 
         self._talk = _dict_to_list(data["talk"])
-        self._embeddings = _dict_to_list(data["embeddings"])
+        self._embedding = data["embedding"]
         self._pipeline_models = {
             k: data[k] for k in ("mcp", "rag", "orchestrator")
         }
@@ -37,20 +37,10 @@ class Config:
     def get_pipeline_model(self, key: str) -> dict:
         return self._pipeline_models[key]
 
-    # --- Embeddings ---
+    # --- Embedding (fixed infrastructure) ---
 
-    @property
-    def embeddings(self) -> list[dict]:
-        return self._embeddings
-
-    def find_embedding_model(self, model: str) -> dict | None:
-        for cfg in self._embeddings:
-            if cfg.get("model") == model:
-                return cfg
-        return None
-
-    def list_embedding_models(self) -> list[str]:
-        return [cfg["model"] for cfg in self._embeddings if _is_available(cfg)]
+    def get_embedding_config(self) -> dict:
+        return self._embedding
 
     # --- Other ---
 

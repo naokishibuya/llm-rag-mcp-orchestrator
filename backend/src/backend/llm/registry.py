@@ -32,16 +32,15 @@ class Registry:
         self._chat_model_cache[key] = llm
         return llm
 
-    def get_embeddings(self, model: str) -> Embeddings:
-        if model in self._embeddings_cache:
-            return self._embeddings_cache[model]
+    def resolve_embeddings(self) -> Embeddings:
+        """Resolve the fixed embedding model from config."""
+        key = "_embedding"
+        if key in self._embeddings_cache:
+            return self._embeddings_cache[key]
 
-        cfg = self._config.find_embedding_model(model)
-        if not cfg:
-            raise ValueError(f"Unknown embedding model: {model}")
-
+        cfg = self._config.get_embedding_config()
         embeddings = _load_class(cfg)
-        self._embeddings_cache[model] = embeddings
+        self._embeddings_cache[key] = embeddings
         return embeddings
 
 

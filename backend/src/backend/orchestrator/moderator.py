@@ -50,11 +50,11 @@ class Moderator:
         text_lower = text.strip().lower()
 
         for pattern, reason in self.BLOCK_PATTERNS:
-            if re.search(pattern, text_lower, re.I):
+            if re.search(pattern, text_lower):
                 return Moderation(Verdict.BLOCK, reason)
 
         for pattern, reason in self.WARN_PATTERNS:
-            if re.search(pattern, text_lower, re.I):
+            if re.search(pattern, text_lower):
                 return Moderation(Verdict.WARN, reason)
 
         return Moderation(Verdict.ALLOW)
