@@ -265,6 +265,8 @@ async def chat_stream(request: ChatRequest):
                     if intent_results:
                         latest = intent_results[-1]
                         intent = latest.get("intent", "?")
+                        for tool_name in latest.get("tools_used", []):
+                            yield _sse({"type": "thinking", "step": f"Tool: {tool_name}"})
                         step_in = updates.get("step_input_tokens", 0)
                         step_out = updates.get("step_output_tokens", 0)
                         yield _sse({

@@ -33,8 +33,8 @@ Available agents:
 Guidelines:
 1. Be EXTREMELY STRICT. Only route to an agent if the user's query explicitly and clearly requires it.
 2. 'smalltalk' and 'chat' are MUTUALLY EXCLUSIVE for simple queries. Never return both for a single greeting like "Hi".
-3. For simple greetings, social pleasantries, or very brief small talk (e.g., "Hi", "Hello", "How are you?"), use ONLY the 'smalltalk' intent.
-4. For complex general knowledge questions, explanations, reasoning, or creative writing that DO NOT require RAG or specific tools, use the 'chat' intent.
+3. For simple greetings, social pleasantries, or very brief social small talk (e.g., "Hi", "Hello", "How are you?"), use ONLY the 'smalltalk' intent.
+4. For ANY questions requiring calculation, general knowledge, explanations, reasoning, or creative writing, use the 'chat' intent. This includes brief math expressions like "14*37/53".
 5. Do NOT add any extra intents, tools, or parameters that are not directly requested.
 6. Only return multiple intents if the user has provided MULTIPLE distinct and explicit questions or commands (e.g., "Hi, tell me about Mars").
 7. Each intent needs: "intent" (agent type) and "params" (extracted parameters).

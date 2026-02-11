@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -172,7 +175,7 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
             <>
               {content && (
                 <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{content}</Markdown>
                 </div>
               )}
               {meta && <ChainMetadata meta={meta} />}
@@ -190,7 +193,7 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
             {meta.results.map((result, i) => (
               <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
                 <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{result.answer}</Markdown>
                 </div>
               </div>
             ))}

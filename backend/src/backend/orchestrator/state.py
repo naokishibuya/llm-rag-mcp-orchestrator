@@ -1,11 +1,4 @@
-from typing import Annotated, Any, TypedDict
-
-
-def merge_dict(existing: dict, new: dict | None) -> dict:
-    """Reducer that merges new keys into existing dict."""
-    if new is None:
-        return existing
-    return {**existing, **new}
+from typing import Any, TypedDict
 
 
 class Message(TypedDict):
@@ -16,11 +9,7 @@ class Message(TypedDict):
 
 
 class AgentState(TypedDict, total=False):
-    """State for the multi-agent orchestration graph.
-
-    Uses Annotated reducers for automatic state merging:
-    - tool_results: Merged via `merge_dict`
-    """
+    """State for the multi-agent orchestration graph."""
 
     # === Input (set once at invocation) ===
     query: str
@@ -40,7 +29,6 @@ class AgentState(TypedDict, total=False):
     agent_response: str  # Current agent's response
     agent_success: bool  # Whether the agent reported success
     intent_results: list[dict]  # Per-intent results with answer, tokens, reflection, etc.
-    tool_results: Annotated[dict[str, dict], merge_dict]  # {tool_name: {tool, args, result/error}}
 
     # === Reflection ===
     reflection_count: int

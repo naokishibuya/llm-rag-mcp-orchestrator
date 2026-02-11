@@ -34,6 +34,7 @@ Critical checks:
 - If Agent Success is false, the agent could not handle this query. Recommend "reroute" to a more suitable agent.
 - If the response suggests code or manual steps instead of providing actual data, it likely failed. Recommend "reroute".
 - If the response confidently states facts that weren't retrieved from a tool or knowledge base, it may be hallucinating.
+- MATH FORMATTING: If the response uses \(, \), \[, or \] for LaTeX, it is INVALID. Recommend "retry" with feedback: "Use $...$ and $$...$$ for math. Delimiters \( \) and \[ \] are not supported."
 
 Respond with JSON:
 {{

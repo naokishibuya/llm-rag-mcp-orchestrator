@@ -65,7 +65,7 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "reflection": None,
-        "tools_used": list(state.get("tool_results", {}).keys()),
+        "tools_used": getattr(result, "tools_used", []),
     }
 
     # On retry/reroute, replace the last entry and accumulate tokens from prior attempt.
@@ -94,7 +94,9 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
     if not is_reflection:
         updates["reflection_count"] = 0
 
-    goto = "reflector" if state.get("use_reflection", False) and intent_data.get("intent") != "smalltalk" else "check_next"
+    used_tools = getattr(result, "tools_used", [])
+    skip_reflection = intent_data.get("intent") == "smalltalk" and not used_tools
+    goto = "reflector" if state.get("use_reflection", False) and not skip_reflection else "check_next"
     return Command(update=updates, goto=goto)
 
 
@@ -268,7 +270,6 @@ class Orchestrator:
             "agent_response": "",
             "agent_success": True,
             "intent_results": [],
-            "tool_results": {},
             # Reflection
             "reflection_count": 0,
             "reflection_feedback": None,
