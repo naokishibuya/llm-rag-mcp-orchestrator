@@ -94,7 +94,7 @@ class Router:
         if exclude_agent:
             for intent in result.intents:
                 if intent["agent"] == exclude_agent:
-                    fallback = feedback.get("suggested_agent") or "TalkerAgent"
+                    fallback = feedback.get("suggested_agent") or "TalkAgent"
                     logger.info(f"Excluding failed agent {exclude_agent}, falling back to {fallback}")
                     intent["agent"] = fallback
 
@@ -131,7 +131,7 @@ class Router:
             ]
         except Exception:
             logger.warning(f"Failed to parse routing result, falling back to chat: {response.text}")
-            intents = [{"intent": "chat", "agent": self._intent_to_agent.get("chat", "TalkerAgent"), "params": {}}]
+            intents = [{"intent": "chat", "agent": self._intent_to_agent.get("chat", "TalkAgent"), "params": {}}]
 
         logger.info(f"Routed query: {query!r} -> {intents}")
 
