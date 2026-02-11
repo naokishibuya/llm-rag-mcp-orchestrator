@@ -21,6 +21,12 @@ User ─► React UI ─► FastAPI ─► Orchestrator (LangGraph)
 
 The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
 
+### Thinking UI & Reflection
+
+The UI streams orchestration steps in real time via SSE — routing decisions, agent outputs, and reflection evaluations appear as they happen. The thinking section auto-collapses once the final answer arrives.
+
+<img src="images/thinking-ui.png" alt="Thinking UI showing orchestration steps" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+
 ## Quick Start
 
 ### Prerequisites

@@ -94,7 +94,7 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
     if not is_reflection:
         updates["reflection_count"] = 0
 
-    goto = "reflector" if state.get("use_reflection", False) else "check_next"
+    goto = "reflector" if state.get("use_reflection", False) and intent_data.get("intent") != "smalltalk" else "check_next"
     return Command(update=updates, goto=goto)
 
 
@@ -151,17 +151,20 @@ class Orchestrator:
         # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
         self._agents = {
             "TalkAgent": TalkAgent(),
+            "SmalltalkAgent": TalkAgent(), # Same underlying logic
             "RAGAgent": RAGAgent(self._embedder),
         }
 
         # Map agent name → state key for model selection
         agent_models = {
             "TalkAgent": "model",
+            "SmalltalkAgent": "model",
             "RAGAgent": "rag_model",
         }
 
         routing: dict[str, RoutingMeta] = {
-            "TalkAgent": RoutingMeta("chat", "General conversation, greetings", {}),
+            "TalkAgent": RoutingMeta("chat", "Complex general knowledge questions, explanations, or creative writing", {}),
+            "SmalltalkAgent": RoutingMeta("smalltalk", "Simple greetings, social pleasantries, or very brief small talk", {}),
             "RAGAgent": RoutingMeta("rag", "Knowledge base / documentation questions", {"query": "question"}),
         }
 

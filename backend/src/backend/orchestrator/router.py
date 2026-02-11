@@ -30,10 +30,14 @@ SYSTEM_PROMPT = """You classify user intent and route to specialized agents.
 Available agents:
 {descriptions}
 
-Rules:
-- For a SINGLE question, return exactly ONE intent — pick the best agent.
-- For queries with MULTIPLE distinct questions, return one intent per question.
-Each intent needs: "intent" (agent type) and "params" (extracted parameters).
+Guidelines:
+1. Be EXTREMELY STRICT. Only route to an agent if the user's query explicitly and clearly requires it.
+2. 'smalltalk' and 'chat' are MUTUALLY EXCLUSIVE for simple queries. Never return both for a single greeting like "Hi".
+3. For simple greetings, social pleasantries, or very brief small talk (e.g., "Hi", "Hello", "How are you?"), use ONLY the 'smalltalk' intent.
+4. For complex general knowledge questions, explanations, reasoning, or creative writing that DO NOT require RAG or specific tools, use the 'chat' intent.
+5. Do NOT add any extra intents, tools, or parameters that are not directly requested.
+6. Only return multiple intents if the user has provided MULTIPLE distinct and explicit questions or commands (e.g., "Hi, tell me about Mars").
+7. Each intent needs: "intent" (agent type) and "params" (extracted parameters).
 
 Parameters by intent:
 {params_lines}
@@ -81,11 +85,13 @@ class Router:
     async def __call__(self, state: dict) -> Command:
         query = state["query"]
         exclude_agent = None
+        suggested_agent = None
 
         feedback = state.get("reflection_feedback")
         if feedback and feedback.get("action") == "reroute":
             query = feedback["query"]
             exclude_agent = feedback.get("exclude_agent")
+            suggested_agent = feedback.get("suggested_agent")
 
         result = await self.execute(
             model=state["orchestrator_model"],
@@ -93,13 +99,34 @@ class Router:
             history=state["history"],
         )
 
-        # If the router picked the same agent that just failed, fall back.
-        if exclude_agent:
-            for intent in result.intents:
-                if intent["agent"] == exclude_agent:
-                    fallback = feedback.get("suggested_agent") or "TalkAgent"
-                    logger.info(f"Excluding failed agent {exclude_agent}, falling back to {fallback}")
-                    intent["agent"] = fallback
+        # Handle reroute:
+        # If we were rerouting a specific failed agent in a multi-intent sequence,
+        # we want to replace JUST that agent in the original sequence, not the whole list.
+        current_intents = list(state.get("intents", []))
+        if exclude_agent and current_intents:
+            idx = state.get("current_intent_index", 0) - 1
+            if 0 <= idx < len(current_intents) and current_intents[idx]["agent"] == exclude_agent:
+                # Use the first intent from the new routing as the replacement
+                new_intent = result.intents[0] if result.intents else None
+                if not new_intent or new_intent["agent"] == exclude_agent:
+                    fallback = suggested_agent or "TalkAgent"
+                    new_intent = {
+                        "intent": "chat",
+                        "agent": fallback,
+                        "params": {"query": query}
+                    }
+                
+                logger.info(f"Rerouting intent {idx}: {exclude_agent} -> {new_intent['agent']}")
+                current_intents[idx] = new_intent
+                return Command(
+                    update={
+                        "intents": current_intents,
+                        "current_intent_index": idx, # stay at this index to execute replacement
+                        "router_input_tokens": result.input_tokens,
+                        "router_output_tokens": result.output_tokens,
+                    },
+                    goto="agent",
+                )
 
         return Command(
             update={
