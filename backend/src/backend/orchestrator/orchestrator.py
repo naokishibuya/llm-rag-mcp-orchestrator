@@ -48,7 +48,7 @@ async def _agent_node(state: dict, agents: dict) -> Command:
         params=params,
         embedder=state["embedder"],
     )
-    is_retry = feedback and feedback.get("action") == "retry"
+    is_reflection = feedback and feedback.get("action") in ("retry", "reroute")
     updates = {
         "agent_response": result.response,
         "agent_success": getattr(result, "success", True),
@@ -58,7 +58,7 @@ async def _agent_node(state: dict, agents: dict) -> Command:
         "input_tokens": getattr(result, "input_tokens", 0),
         "output_tokens": getattr(result, "output_tokens", 0),
     }
-    if not is_retry:
+    if not is_reflection:
         updates["reflection_count"] = 0
 
     goto = "reflector" if state.get("use_reflection", False) else "check_next"

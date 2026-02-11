@@ -77,16 +77,26 @@ class Router:
 
     async def __call__(self, state: dict) -> Command:
         query = state["query"]
+        exclude_agent = None
 
         feedback = state.get("reflection_feedback")
         if feedback and feedback.get("action") == "reroute":
             query = feedback["query"]
+            exclude_agent = feedback.get("exclude_agent")
 
         result = await self.execute(
             model=state["model"],
             query=query,
             history=state["history"],
         )
+
+        # If the router picked the same agent that just failed, fall back.
+        if exclude_agent:
+            for intent in result.intents:
+                if intent["agent"] == exclude_agent:
+                    fallback = feedback.get("suggested_agent") or "TalkerAgent"
+                    logger.info(f"Excluding failed agent {exclude_agent}, falling back to {fallback}")
+                    intent["agent"] = fallback
 
         return Command(
             update={
