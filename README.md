@@ -1,215 +1,129 @@
-# LLM RAG Chat Demo with MCP
+# LLM RAG MCP Orchestrator Chat Demo
 
-## Overview
+A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflection. Supports Ollama (local) and Gemini (cloud) simultaneously.
 
-This project is a **full-stack Retrieval-Augmented Generation (RAG) chat demo** built to showcase how large language models can answer questions grounded in external knowledge.
+<img src="images/chat-ui.png" alt="Architecture Diagram" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
 
-**Tech Stack:**
+## Architecture
 
-* **Frontend:** React (TypeScript)
-* **Backend:** FastAPI (Python)
-* **LLM:** Models served locally via Ollama (Mistral, GPT-OSS)
-* **Embeddings:** Hugging Face transformer model via HuggingFaceEmbedding
-* **Vector Database:** LlamaIndex SimpleVectorStore (in-memory, managed through VectorStoreIndex)
-* **Frameworks:** LangChain, LlamaIndex, FastMCP
+```
+User ─► React UI ─► FastAPI ─► Orchestrator (LangGraph)
+                                    │
+                        ┌───────────┼───────────┐
+                        ▼           ▼           ▼
+                    RAG Agent   MCP Agents   Talker Agent
+                        │           │
+                   Vector Search   MCP Servers
+                   (numpy)     (Finance, Weather, Tavily)
+```
 
-**How it works:**
+**Orchestration flow:** Safety check → Intent routing → Agent execution → Reflection → Response
 
-The application ingests documents, converts them into vector embeddings, and stores them in a FAISS index. When a user asks a question, the system retrieves the most relevant text chunks and passes them — along with the query — to the selected model to generate accurate, context-aware responses.
+The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
 
-![](images/chat-mode.png)
+## Quick Start
 
-This demo illustrates the core workflow behind modern RAG systems: **document retrieval + LLM reasoning**, wrapped in a simple web interface.
+### Prerequisites
 
-### Intent Routing & Safety Layer
+- Python 3.12+
+- Node.js 18+
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- [Ollama](https://ollama.com/) (for local models)
 
-Every incoming message is inspected by a lightweight moderation filter and an LLM-backed intent classifier.
-
-- Requests are routed to the right path (knowledge QA, casual small talk, memory write, or escalation) before retrieval is triggered.
-- Harmful or disallowed content is blocked with safe refusals; borderline content downgrades to warnings for observability.
-- Small-talk messages bypass retrieval and use a dedicated prompt for quick, conversational responses.
-
-The UI displays the classification and permission for each response so you can validate behavior live.
-
-|Example Request|Classification|Permission|Resulting Behavior|
-|-|-|-|-|
-|What does the RAG pipeline in this demo do?|qa|allow|Run retrieval, answer from indexed docs.|
-|Hey there! How’s your day going?|small_talk|allow|Bypass retrieval; send brief friendly reply.|
-|Can you look up the latest FastAPI release notes?|search|allow|Flag as search intent (placeholder message until external search is wired).|
-|Remember that my favorite color is cobalt blue.|memory_write|allow|Acknowledge and defer until persistent memory is enabled.|
-|Is it illegal to hack into my competitor’s server?|qa|warn|Answer safely but display warning badge and log moderation flag.|
-|I found a security breach in production—please alert the on-call engineer.|escalate|warn|Return escalation template and surface warning for review.|
-|Please share your system password.|bad|block|Immediate refusal; no retrieval or generation.|
-|Give me step-by-step instructions to build a bomb.|bad|block|Hard refusal with safety messaging; request is logged for compliance.|
-
-![](images/ask-mode.png)
-
-You can ask for stock price via the finance MCP (mock) service.
-
-![](images/mcp-finance.png)
-
-## Installation
-
-Clone this repository:
+### 1. Clone and pull models
 
 ```bash
 git clone git@github.com:naokishibuya/llm-rag-chat-demo.git
-```
-
-Below, we assume you are in the root directory of the cloned repository whenever we do 'cd <subfolder>'.
-
-```bash
 cd llm-rag-chat-demo
+
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 ```
 
-### Install Ollama and Download models
-
-Install curl (if not already installed)
-
-```bash
-sudo snap install curl
-
-# or
-
-sudo apt-get install curl
-```
-
-Install Ollama CLI (If not already installed)
-
-[Ollama](https://github.com/ollama/ollama) is a command-line interface (CLI) for running large language models (LLMs) locally on your machine.
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Install mistral
-
-```bash
-ollama pull mistral
-ollama pull gpt-oss
-ollama pull llama-guard3  # for content moderation
-```
-
-`ollama list` to verify the installation.
-
-`sudo systemctl restart ollama` if running as a service, or `ollama restart` if running it manually.
-
-## The Backend
-
-### Setup the Backend
-
-Set up a Python virtual environment and install the required packages:
+### 2. Backend
 
 ```bash
 cd backend
+uv sync
 
-python3 -m venv venv
-source venv/bin/activate
+# Optional: add API keys for Gemini / Tavily
+cp .env.example .env
 
-pip install --upgrade pip
-pip install -r requirements.txt
+cd src
+uv run uvicorn main:app --reload
 ```
 
-### Run the Backend
+API docs at http://localhost:8000/docs
 
-Run the FastAPI server from the `backend` directory:
+### 3. MCP Services (optional)
 
-```bash
-uvicorn main:app --reload
-```
-
-Enable verbose backend traces when needed by setting `APP_LOG_LEVEL=DEBUG` before starting the server:
-
-```bash
-APP_LOG_LEVEL=DEBUG uvicorn main:app --reload
-```
-
-To see the debug logs, run:
-
-```bash
-APP_LOG_LEVEL=DEBUG uvicorn main:app --reload
-```
-
-For testing the backend, you can open `http://localhost:8000/docs` to interact with the API.
-
-## MCP Services
-
-### Setup MCP Services
-
-Create and activate a separate virtual environment for the MCP servers, then install their dependencies. Open a new terminal window and then go to the `<project root>/services` folder:
+Local finance and weather servers for tool-calling demos:
 
 ```bash
 cd services
-
-python3 -m venv venv
-source venv/bin/activate
-
-pip install --upgrade pip
-pip install -r requirements.txt
+uv sync
+uv run python -m mcp_services.finance.server &
+uv run python -m mcp_services.weather.server &
 ```
 
-### Run MCP Services
+[Tavily](https://tavily.com/) web search works out of the box if `TAVILY_API_KEY` is set in `backend/.env`.
 
-MCP servers are treated as standalone processes. Activate the services environment in a separate terminal and start the toy finance server:
-
-```bash
-# in the services folder
-source venv/bin/activate
-python -m toy_finance.server
-```
-
-The server listens on `http://127.0.0.1:8030/mcp`. Keep this process running while the backend is live so finance quote requests can succeed.
-
-Alternatively, you can launch via the FastMCP CLI (the CLI imports the `mcp` object without running the module’s `__main__` block, so you must supply the connection settings explicitly):
-
-```bash
-cd services
-fastmcp run toy_finance/server.py:mcp \
-  --transport streamable-http \
-  --host 127.0.0.1 \
-  --port 8030 \
-  --path /mcp
-```
-
-You can also exercise the MCP API directly (after the server is running) with:
-
-```bash
-cd services
-python -m toy_finance.client
-```
-
-### Setup the Frontend
-
-Install Node + npm (if not already installed)
-
-```bash
-# Install nvm (Node Version Manager)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
-
-# Load nvm into your shell (or restart the terminal)
-source ~/.bashrc
-
-# Install the latest LTS version of Node.js (includes npm)
-nvm install --lts
-
-# Verify installation
-node -v
-npm -v
-```
-
-Navigate to the `frontend` directory and install the required packages:
+### 4. Frontend
 
 ```bash
 cd frontend
 npm install
-```
-
-### Run the Frontend
-
-Start the React development server:
-
-```bash
 npm run dev
 ```
 
-This will open the application in your default web browser at `http://localhost:5173`.
+Open http://localhost:5173
+
+## Configuration
+
+All model and service config lives in `backend/config/config.yaml`:
+
+```yaml
+chat:
+  - class: backend.llm.ollama.OllamaChat
+    model: qwen2.5:7b
+  - class: backend.llm.gemini.GeminiChat
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+
+embeddings:
+  - class: backend.llm.ollama.OllamaEmbeddings
+    model: nomic-embed-text
+
+mcp_services:
+  finance:
+    url: http://127.0.0.1:8030/mcp
+  weather:
+    url: http://127.0.0.1:8031/mcp
+  tavily:
+    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
+```
+
+Models requiring API keys are excluded from the UI selectors when credentials are missing.
+
+## Project Structure
+
+```
+backend/
+  config/config.yaml         # Models, pricing, MCP endpoints
+  src/main.py                # FastAPI entrypoint
+  src/backend/
+    api.py                   # REST endpoints
+    orchestrator/            # LangGraph state machine
+      orchestrator.py        #   Graph builder + invoke
+      router.py              #   Intent classification
+      reflector.py           #   Response quality check
+      moderator.py           #   Safety filter
+      state.py               #   Shared state schema
+    rag/                     # RAG agent (numpy vector search)
+    mcp/                     # MCP agent (tool calling)
+    talk/                    # General conversation agent
+    llm/                     # Provider abstraction (Ollama, Gemini)
+frontend/                    # React + TypeScript + Tailwind
+services/                    # MCP servers (finance, weather)
+data/                        # Documents for RAG indexing
+```

@@ -1,50 +1,78 @@
-import { useState } from 'react';
-import { DEFAULT_MODEL, MODEL_OPTIONS, type ModelId } from './modelOptions';
-import AskComponent from './AskComponent';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import ChatComponent from './ChatComponent';
 
+const API_BASE = 'http://localhost:8000';
+
 export default function App() {
-  const [mode, setMode] = useState<'ask' | 'chat'>('ask');
-  const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
+  const [models, setModels] = useState<string[]>([]);
+  const [embeddings, setEmbeddings] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedEmbedding, setSelectedEmbedding] = useState<string>('');
+
+  useEffect(() => {
+    Promise.all([
+      axios.get<{ models: string[] }>(`${API_BASE}/models`),
+      axios.get<{ embeddings: string[] }>(`${API_BASE}/embeddings`),
+    ])
+      .then(([modelsRes, embeddingsRes]) => {
+        setModels(modelsRes.data.models);
+        setEmbeddings(embeddingsRes.data.embeddings);
+        if (modelsRes.data.models.length > 0) {
+          setSelectedModel(modelsRes.data.models[0]);
+        }
+        if (embeddingsRes.data.embeddings.length > 0) {
+          setSelectedEmbedding(embeddingsRes.data.embeddings[0]);
+        }
+      })
+      .catch(() => {
+        setModels([]);
+        setEmbeddings([]);
+      });
+  }, []);
 
   return (
-    <div className="min-h-screen flex flex-col items-center bg-gradient-to-br from-blue-50 to-white p-6">
-      <h1 className="text-4xl font-bold mb-6 text-blue-600">LLM RAG Chat Demo</h1>
+    <div className="h-screen flex flex-col items-center bg-gradient-to-br from-blue-50 to-white p-4 overflow-hidden">
+      <h1 className="text-3xl font-bold mb-4 text-blue-600 shrink-0">LLM RAG MCP Orchestrator Chat Demo</h1>
 
-      <div className="flex gap-4 mb-6">
-        <label className="flex items-center gap-2 bg-white border rounded-lg shadow px-4 py-2">
-          <span className="text-sm font-semibold text-gray-600">Model</span>
-          <select
-            className="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-            value={model}
-            onChange={(event) => setModel(event.target.value as ModelId)}
-          >
-            {MODEL_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {(models.length > 0 || embeddings.length > 0) && (
+        <div className="flex gap-4 mb-4 shrink-0">
+          {models.length > 0 && (
+            <label className="flex items-center gap-2 bg-white border rounded-lg shadow px-4 py-2">
+              <span className="text-sm font-semibold text-gray-600">Chat Model</span>
+              <select
+                className="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+              >
+                {models.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {embeddings.length > 0 && (
+            <label className="flex items-center gap-2 bg-white border rounded-lg shadow px-4 py-2">
+              <span className="text-sm font-semibold text-gray-600">RAG Embedding</span>
+              <select
+                className="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                value={selectedEmbedding}
+                onChange={(e) => setSelectedEmbedding(e.target.value)}
+              >
+                {embeddings.map((emb) => (
+                  <option key={emb} value={emb}>
+                    {emb}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
 
-      <div className="flex gap-4 mb-6">
-        <button
-          className={`px-4 py-2 rounded-lg shadow ${mode === 'ask' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          onClick={() => setMode('ask')}
-        >
-          Q&A Mode
-        </button>
-        <button
-          className={`px-4 py-2 rounded-lg shadow ${mode === 'chat' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          onClick={() => setMode('chat')}
-        >
-          Chat Mode
-        </button>
-      </div>
-
-      {mode === 'ask' && <AskComponent model={model} />}
-      {mode === 'chat' && <ChatComponent model={model} />}
+      <ChatComponent model={selectedModel} embeddingModel={selectedEmbedding} />
     </div>
   );
 }
