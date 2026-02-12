@@ -7,27 +7,23 @@ import 'katex/dist/katex.min.css';
 
 const API_BASE = 'http://localhost:8000';
 
+type TokenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+};
+
 type ReflectionInfo = {
   action: string;
   score: number | null;
   feedback: string;
-  input_tokens?: number;
-  output_tokens?: number;
 };
 
-type IntentMetrics = {
-  input_tokens: number;
-  output_tokens: number;
-  cost: number;
-  tools_used: string[];
-  reflection: ReflectionInfo | null;
-};
-
-type IntentResult = {
-  answer: string;
+type AgentResult = {
   intent: string;
   model: string;
-  metrics: IntentMetrics;
+  answer: string;
+  reflection: ReflectionInfo | null;
+  tools_used: string[];
 };
 
 type ModerationInfo = {
@@ -35,29 +31,22 @@ type ModerationInfo = {
   reason?: string | null;
 };
 
-type RouterInfo = {
-  input_tokens: number;
-  output_tokens: number;
-  cost: number;
-};
-
-type TotalInfo = {
+type CostInfo = {
   input_tokens: number;
   output_tokens: number;
   cost: number;
 };
 
 type ResponseMeta = {
-  results: IntentResult[];
+  results: AgentResult[];
   moderation: ModerationInfo;
-  router: RouterInfo;
-  total?: TotalInfo;
+  total?: CostInfo;
 };
 
 type ThinkingStep = {
   step: string;
   detail?: string;
-  tokens?: { in: number; out: number };
+  tokens?: TokenUsage;
 };
 
 type Message = {
@@ -94,7 +83,7 @@ function ChainMetadata({ meta }: { meta: ResponseMeta }) {
   }
 
   // Show tools used across all results
-  const tools = meta.results.flatMap(r => r.metrics.tools_used).filter(Boolean);
+  const tools = meta.results.flatMap(r => r.tools_used).filter(Boolean);
   if (tools.length > 0) {
     parts.push(`Tools: ${[...new Set(tools)].join(', ')}`);
   }
@@ -141,7 +130,7 @@ function ThinkingSection({ steps, isStreaming }: { steps: ThinkingStep[]; isStre
               {s.step}
               {s.tokens && (
                 <span className="text-gray-400 ml-1">
-                  tokens: [{s.tokens.in}/{s.tokens.out}]
+                  tokens: [{s.tokens.input_tokens}/{s.tokens.output_tokens}]
                 </span>
               )}
               {s.detail && (
@@ -250,7 +239,7 @@ export default function ChatComponent({ model }: ChatProps) {
     setMessages([...updatedMessages, initialAssistant]);
 
     try {
-      const response = await fetch(`${API_BASE}/chat/stream`, {
+      const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -276,10 +265,9 @@ export default function ChatComponent({ model }: ChatProps) {
       const decoder = new TextDecoder();
 
       let thinking: ThinkingStep[] = [];
-      let results: IntentResult[] = [];
+      let results: AgentResult[] = [];
       let moderation: ModerationInfo = { verdict: 'allow' };
-      let router: RouterInfo = { input_tokens: 0, output_tokens: 0, cost: 0 };
-      let total: TotalInfo | undefined;
+      let total: CostInfo | undefined;
       let buffer = '';
 
       while (true) {
@@ -309,7 +297,6 @@ export default function ChatComponent({ model }: ChatProps) {
             results = [...results, event.result];
           } else if (event.type === 'done') {
             moderation = event.moderation;
-            router = event.router;
             total = event.total;
           } else if (event.type === 'error') {
             throw new Error(event.message);
@@ -318,7 +305,7 @@ export default function ChatComponent({ model }: ChatProps) {
           // Update the assistant message in-place
           const content = results.map(r => r.answer).join('\n\n');
           const meta: ResponseMeta | undefined = results.length > 0
-            ? { results, moderation, router, total }
+            ? { results, moderation, total }
             : undefined;
 
           setMessages(prev => {
@@ -342,7 +329,7 @@ export default function ChatComponent({ model }: ChatProps) {
         updated[assistantIdx] = {
           role: 'assistant',
           content: finalContent,
-          meta: { results, moderation, router, total },
+          meta: { results, moderation, total },
           thinking: [...thinking],
           isStreaming: false,
         };

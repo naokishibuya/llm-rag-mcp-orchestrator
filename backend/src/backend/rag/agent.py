@@ -24,14 +24,14 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, embedder: Embeddings):
-        self.index = RAGClient()
+    def __init__(self, model: Chat, embedder: Embeddings):
+        self._model = model
         self._embedder = embedder
+        self.index = RAGClient()
 
     async def execute(
         self,
         *,
-        model: Chat,
         query: str,
         params: dict = None,
         **_,
@@ -48,6 +48,7 @@ class RAGAgent:
             logger.info("RAG: no relevant docs found (score < 0.3 or empty)")
             return RAGResult(
                 response="I couldn't find relevant information in the knowledge base for your question.",
+                model=self._model.model,
                 tool="search_knowledge_base",
                 args={"query": search_query},
                 result={"docs_found": 0},
@@ -68,7 +69,7 @@ class RAGAgent:
             {"role": "user", "content": query},
         ]
 
-        response = model.chat(messages, schema=RAGResponse)
+        response = self._model.chat(messages, schema=RAGResponse)
 
         try:
             parsed = RAGResponse(**json.loads(response.text))
@@ -85,6 +86,7 @@ class RAGAgent:
 
         return RAGResult(
             response=answer,
+            model=self._model.model,
             tool="search_knowledge_base",
             args={"query": search_query},
             result={

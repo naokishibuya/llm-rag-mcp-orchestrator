@@ -26,17 +26,19 @@ DEFAULT_FORMAT = "Respond with a well-formatted answer. Be concise."
 @dataclass
 class MCPResult:
     response: str
+    model: str = ""
     success: bool = True
     input_tokens: int = 0
     output_tokens: int = 0
 
 
 class MCPAgent:
-    def __init__(self, handler: MCPHandler, service: MCPService):
+    def __init__(self, handler: MCPHandler, service: MCPService, model: Chat):
         self._handler = handler
+        self._model = model
         self._format_hint = service.format_hint or DEFAULT_FORMAT
 
-    async def execute(self, *, query: str, model: Chat, params: dict = None, **_) -> MCPResult:
+    async def execute(self, *, query: str, params: dict = None, **_) -> MCPResult:
         data = await self._handler.handle(**(params or {}))
 
         if isinstance(data, dict) and data.get("unavailable"):
@@ -62,10 +64,11 @@ class MCPAgent:
                 format_instruction=self._format_hint,
             )
             messages = [{"role": "user", "content": prompt}]
-            response = model.chat(messages)
+            response = self._model.chat(messages)
             logger.info(f"MCPAgent response for {self._handler.service.name}: {response.text[:100]}...")
             return MCPResult(
                 response=response.text,
+                model=self._model.model,
                 input_tokens=response.input_tokens,
                 output_tokens=response.output_tokens,
             )

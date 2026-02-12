@@ -15,7 +15,7 @@ from backend.api import orchestrator, router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await orchestrator.initialize()
+    await orchestrator.startup()
     yield
     await orchestrator.shutdown()
 

@@ -3,25 +3,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from ..llm import Chat
+from .state import AgentRequest, TokenUsage
+
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RoutingMeta:
+class RoutingInfo:
     description: str
     params_schema: dict[str, str]
-
-
-@dataclass
-class RouterResult:
-    intents: list[dict]
-    input_tokens: int = 0
-    output_tokens: int = 0
 
 
 SYSTEM_PROMPT = """You classify user intent and route to specialized agents.
@@ -44,21 +38,17 @@ Parameters by intent:
 
 
 class Router:
-    def __init__(self, routing: dict[str, RoutingMeta]):
+    def __init__(self, routing: dict[str, RoutingInfo], *, model: Chat):
+        self._model = model
         self._intent_names: list[str] = []
         self._descriptions: list[str] = []
         self._params_lines: list[str] = []
         self._update(routing)
 
-    @property
-    def agent_descriptions(self) -> str:
-        """Available intents formatted for the reflector prompt."""
-        return "\n".join(self._descriptions)
-
-    def add_routes(self, routing: dict[str, RoutingMeta]):
+    def add_routes(self, routing: dict[str, RoutingInfo]):
         self._update(routing)
 
-    def _update(self, routing: dict[str, RoutingMeta]):
+    def _update(self, routing: dict[str, RoutingInfo]):
         for intent_name, meta in routing.items():
             self._intent_names.append(intent_name)
             self._descriptions.append(f"- {intent_name}: {meta.description}")
@@ -81,89 +71,35 @@ class Router:
         )
         logger.info("Router prompt:\n%s", self._system_prompt)
 
-    async def __call__(self, state: dict) -> Command:
-        query = state["query"]
-        exclude_intent = None
-        suggested_intent = None
-
-        feedback = state.get("reflection_feedback")
-        if feedback and feedback.get("action") == "reroute":
-            query = feedback["query"]
-            exclude_intent = feedback.get("exclude_intent")
-            suggested_intent = feedback.get("suggested_intent")
-
-        result = await self.execute(
-            model=state["orchestrator_model"],
-            query=query,
-            history=state["history"],
-        )
-
-        # Handle reroute:
-        # If we were rerouting a specific failed intent in a multi-intent sequence,
-        # we want to replace JUST that intent in the original sequence, not the whole list.
-        current_intents = list(state.get("intents", []))
-        if exclude_intent and current_intents:
-            idx = state.get("current_intent_index", 0) - 1
-            if 0 <= idx < len(current_intents) and current_intents[idx]["intent"] == exclude_intent:
-                # Use the first intent from the new routing as the replacement
-                new_intent = result.intents[0] if result.intents else None
-                if not new_intent or new_intent["intent"] == exclude_intent:
-                    fallback = suggested_intent or "chat"
-                    new_intent = {
-                        "intent": fallback,
-                        "params": {"query": query}
-                    }
-
-                logger.info(f"Rerouting intent {idx}: {exclude_intent} -> {new_intent['intent']}")
-                current_intents[idx] = new_intent
-                return Command(
-                    update={
-                        "intents": current_intents,
-                        "current_intent_index": idx, # stay at this index to execute replacement
-                        "router_input_tokens": result.input_tokens,
-                        "router_output_tokens": result.output_tokens,
-                    },
-                    goto="agent",
-                )
-
-        return Command(
-            update={
-                "intents": result.intents,
-                "current_intent_index": 0,
-                "router_input_tokens": result.input_tokens,
-                "router_output_tokens": result.output_tokens,
-            },
-            goto="agent",
-        )
-
-    async def execute(
-        self, model: Chat, query: str, history: list[dict]
-    ) -> RouterResult:
+    def route(
+        self, query: str, history: list[dict]
+    ) -> tuple[list[AgentRequest], TokenUsage]:
         messages = [{"role": "system", "content": self._system_prompt}]
 
         recent_history = history[-3:] if len(history) > 3 else history
         messages.extend(recent_history)
         messages.append({"role": "user", "content": query})
 
-        response = model.chat(messages, self._RoutingResult)
+        response = self._model.chat(messages, self._RoutingResult)
 
         try:
             result = self._RoutingResult.model_validate_json(response.text)
             intents = [
-                {
-                    "intent": item.intent.value,
-                    "params": item.params,
-                }
+                AgentRequest(
+                    intent=item.intent.value,
+                    params=item.params,
+                )
                 for item in result.intents
             ]
         except Exception:
             logger.warning(f"Failed to parse routing result, falling back to chat: {response.text}")
-            intents = [{"intent": "chat", "params": {}}]
+            intents = [AgentRequest()]
 
         logger.info(f"Routed query: {query!r} -> {intents}")
 
-        return RouterResult(
-            intents=intents,
+        tokens = TokenUsage(
+            model=self._model.model,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
         )
+        return intents, tokens

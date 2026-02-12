@@ -10,14 +10,19 @@ class Config:
 
         self._talk = _dict_to_list(data["talk"])
         self._embedding = data["embedding"]
+
+        # Separate orchestrator behavior settings from model config
+        orch_cfg = dict(data["orchestrator"])
+        self._max_reflections: int = orch_cfg.pop("max_reflections", 2)
         self._pipeline_models = {
-            k: data[k] for k in ("mcp", "rag", "orchestrator")
+            "mcp": data["mcp"],
+            "rag": data["rag"],
+            "orchestrator": orch_cfg,
         }
+
         self._pricing = data["pricing"]
         self._mcp_services = data["mcp_services"]
         self._metrics = data["metrics"]
-
-    # --- Talk (user-facing) models ---
 
     @property
     def talk(self) -> list[dict]:
@@ -32,17 +37,21 @@ class Config:
     def list_talk_models(self) -> list[str]:
         return [cfg["model"] for cfg in self._talk if _is_available(cfg)]
 
-    # --- Pipeline models ---
+    def default_talk_model(self) -> str:
+        models = self.list_talk_models()
+        if not models:
+            raise RuntimeError("No talk models available")
+        return models[0]
 
     def get_pipeline_model(self, key: str) -> dict:
         return self._pipeline_models[key]
 
-    # --- Embedding (fixed infrastructure) ---
-
     def get_embedding_config(self) -> dict:
         return self._embedding
 
-    # --- Other ---
+    @property
+    def max_reflections(self) -> int:
+        return self._max_reflections
 
     @property
     def pricing(self) -> dict:

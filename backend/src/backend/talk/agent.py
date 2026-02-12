@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TalkResult:
     response: str
+    model: str = ""
     success: bool = True
     input_tokens: int = 0
     output_tokens: int = 0
@@ -35,17 +36,14 @@ class TalkAgent:
     ) -> TalkResult:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(history)
-        
-        # We append a direct instruction to the query to reinforce the math rules,
-        # as models often 'forget' system instructions after multiple tool rounds.
-        prompt = f"{query}\n\n(IMPORTANT: Use $...$ for all math. NEVER use \\( or \\[.)"
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": query})
 
         response = model.chat(messages, tools=TOOLS)
-        logger.info(f"Talker response ({response.input_tokens}+{response.output_tokens} tokens): {response.text}")
+        logger.info(f"Talker response tokens=[{response.input_tokens}/{response.output_tokens}]: {response.text}")
 
         return TalkResult(
             response=response.text,
+            model=model.model,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             tools_used=response.tools_used,

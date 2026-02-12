@@ -1,292 +1,73 @@
 import logging
-from functools import partial
-
-from langgraph.graph import END, StateGraph
-from langgraph.types import Command
 
 from ..config import Config
-from ..llm import Chat, Registry
-from ..mcp import MCPAgent, MCPClient, MCPHandler
+from ..llm import Registry
 from ..rag import RAGAgent
 from ..talk import TalkAgent
 from .moderator import Moderator
+from .nodes import build_state_graph
 from .reflector import Reflector
-from .router import Router, RoutingMeta
-from .state import AgentState
+from .router import Router, RoutingInfo
+from .services import ServiceRegistry
+from .state import Intent, Reflection, State
+
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_params(input_schema: dict) -> dict[str, str]:
-    props = input_schema.get("properties", {})
-    required = set(input_schema.get("required", []))
-    return {name: meta.get("description", name) for name, meta in props.items() if name in required}
-
-
-async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
-    idx = state["current_intent_index"]
-    intent_data = state["intents"][idx]
-
-    intent = intent_data.get("intent", "chat")
-    agent = agents.get(intent, agents["chat"])
-
-    params = intent_data.get("params", {})
-
-    query = params.get("query") or state["query"]
-    history = state["history"]
-
-    feedback = state.get("reflection_feedback")
-    if feedback and feedback.get("query"):
-        query = feedback["query"]
-    if feedback and feedback.get("history"):
-        history = feedback["history"]
-
-    # Pick model: chat/smalltalk use user's choice, others use their pipeline model.
-    model_key = agent_models.get(intent, "mcp_model")
-    model = state[model_key]
-
-    result = await agent.execute(
-        query=query,
-        model=model,
-        history=history,
-        params=params,
-    )
-    is_reflection = feedback and feedback.get("action") in ("retry", "reroute")
-
-    input_tokens = getattr(result, "input_tokens", 0)
-    output_tokens = getattr(result, "output_tokens", 0)
-
-    # Build per-intent result entry
-    entry = {
-        "intent": intent,
-        "model": model.model,
-        "answer": result.response,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "reflection": None,
-        "tools_used": getattr(result, "tools_used", []),
-    }
-
-    # On retry/reroute, replace the last entry and accumulate tokens from prior attempt.
-    intent_results = list(state.get("intent_results", []))
-    if is_reflection and intent_results:
-        prev = intent_results[-1]
-        entry["input_tokens"] += prev.get("input_tokens", 0)
-        entry["output_tokens"] += prev.get("output_tokens", 0)
-        # Carry forward any accumulated reflection tokens
-        if prev.get("reflection"):
-            entry["input_tokens"] += prev["reflection"].get("input_tokens", 0)
-            entry["output_tokens"] += prev["reflection"].get("output_tokens", 0)
-        intent_results[-1] = entry
-    else:
-        intent_results.append(entry)
-
-    updates = {
-        "agent_response": result.response,
-        "agent_success": getattr(result, "success", True),
-        "intent_results": intent_results,
-        "current_intent_index": idx + 1,
-        "reflection_feedback": None,
-        "step_input_tokens": input_tokens,
-        "step_output_tokens": output_tokens,
-    }
-    if not is_reflection:
-        updates["reflection_count"] = 0
-
-    used_tools = getattr(result, "tools_used", [])
-    skip_reflection = intent_data.get("intent") == "smalltalk" and not used_tools
-    goto = "reflector" if state.get("use_reflection", False) and not skip_reflection else "check_next"
-    return Command(update=updates, goto=goto)
-
-
-async def _check_next_node(state: dict) -> Command:
-    idx = state.get("current_intent_index", 0)
-    goto = "agent" if idx < len(state.get("intents", [])) else "finalize"
-    return Command(goto=goto)
-
-
-async def _finalize_node(state: dict) -> Command:
-    return Command(update={}, goto=END)
-
-
-async def _blocked_node(state: dict) -> Command:
-    return Command(
-        update={
-            "intent_results": [{
-                "intent": "blocked",
-                "model": "",
-                "answer": "I'm sorry, but I can't assist with that request.",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "reflection": None,
-                "tools_used": [],
-            }],
-        },
-        goto=END,
-    )
 
 
 class Orchestrator:
     def __init__(self, config: Config):
         self._config = config
         self._registry = Registry(config)
-        self._mcp_client: MCPClient | None = None
-        self._graph = None
-        self._agents: dict = {}
+        self._services: ServiceRegistry | None = None
         self._router: Router | None = None
-        self._discovered_servers: set[str] = set()
+        self._graph = None
 
-        # Resolve pipeline models once from config.
-        self._orchestrator_model: Chat = self._registry.resolve_model("orchestrator")
-        self._rag_model: Chat = self._registry.resolve_model("rag")
-        self._mcp_model: Chat = self._registry.resolve_model("mcp")
-        self._embedder = self._registry.resolve_embeddings()
+    async def startup(self):
+        orchestrator_model = self._registry.resolve_model("orchestrator")
 
-    async def initialize(self):
-        mcp_client = MCPClient(self._config.mcp_services)
-        await mcp_client.connect()
-        discovered = await mcp_client.discover()
-        self._mcp_client = mcp_client
+        self._services = ServiceRegistry(
+            self._config.mcp_services,
+            self._registry.resolve_model("mcp"),
+        )
+        await self._services.startup()
 
-        # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
-        # Keyed by intent name (the single routing key).
-        self._agents = {
-            "chat": TalkAgent(),
-            "smalltalk": TalkAgent(),  # Same underlying logic
-            "rag": RAGAgent(self._embedder),
+        agents = {
+            Intent.CHAT: TalkAgent(),
+            Intent.SMALLTALK: TalkAgent(),
+            Intent.RAG: RAGAgent(self._registry.resolve_model("rag"), self._registry.resolve_embeddings()),
+            **self._services.agents,
         }
 
-        # Map intent → state key for model selection
-        agent_models = {
-            "chat": "model",
-            "smalltalk": "model",
-            "rag": "rag_model",
+        routing = {
+            Intent.CHAT: RoutingInfo("Complex general knowledge questions, explanations, or creative writing", {}),
+            Intent.SMALLTALK: RoutingInfo("Simple greetings, social pleasantries, or very brief small talk", {}),
+            Intent.RAG: RoutingInfo("Knowledge base / documentation questions", {"query": "question"}),
+            **self._services.routing,
         }
+        self._router = Router(routing, model=orchestrator_model)
 
-        routing: dict[str, RoutingMeta] = {
-            "chat": RoutingMeta("Complex general knowledge questions, explanations, or creative writing", {}),
-            "smalltalk": RoutingMeta("Simple greetings, social pleasantries, or very brief small talk", {}),
-            "rag": RoutingMeta("Knowledge base / documentation questions", {"query": "question"}),
-        }
+        reflector = Reflector(
+            model=orchestrator_model,
+            max_reflections=self._config.max_reflections,
+        )
 
-        for service in discovered:
-            key = service.name
-            handler = MCPHandler(mcp_client, service)
-            self._agents[key] = MCPAgent(handler, service)
-            agent_models[key] = "mcp_model"
-            routing[key] = RoutingMeta(
-                service.description,
-                _extract_params(service.input_schema),
-            )
-            self._discovered_servers.add(service.server)
-            logger.info(f"Registered MCP intent: {key}")
-
-        self._agent_models = agent_models
-        self._graph = self._build_graph(self._agents, agent_models, routing)
-        logger.info("Orchestrator initialized with %d agents", len(self._agents))
-
-    def _build_graph(self, agents: dict, agent_models: dict, routing: dict[str, RoutingMeta]):
         moderator = Moderator()
-        router = Router(routing)
-        reflector = Reflector(available_intents=router.agent_descriptions)
-        self._router = router
 
-        builder = StateGraph(AgentState)
-        builder.add_node("safety", moderator, destinations=("blocked", "router"))
-        builder.add_node("router", router, destinations=("agent",))
-        builder.add_node("agent", partial(_agent_node, agents=agents, agent_models=agent_models), destinations=("reflector", "check_next"))
-        builder.add_node("reflector", reflector, destinations=("agent", "router", "check_next"))
-        builder.add_node("check_next", _check_next_node, destinations=("agent", "finalize"))
-        builder.add_node("finalize", _finalize_node)
-        builder.add_node("blocked", _blocked_node)
-        builder.set_entry_point("safety")
-
-        return builder.compile()
+        self._graph = build_state_graph(
+            moderator=moderator,
+            router=self._router,
+            agents=agents,
+            reflector=reflector,
+        )
+        print(self._graph.get_graph().draw_mermaid())
+        logger.info("Orchestrator started with %d agents", len(agents))
 
     async def shutdown(self):
-        if self._mcp_client:
-            await self._mcp_client.close()
-            self._mcp_client = None
+        if self._services:
+            await self._services.close()
+            self._services = None
             logger.info("Orchestrator shut down")
-
-    async def _refresh_services(self):
-        """Try to discover tools from MCP servers that weren't available at startup."""
-        if not self._mcp_client or not self._router:
-            return
-        pending = self._mcp_client.servers - self._discovered_servers
-        if not pending:
-            return
-
-        newly_connected: set[str] = set()
-        for server in pending:
-            if await self._mcp_client.reconnect(server):
-                newly_connected.add(server)
-        if not newly_connected:
-            return
-
-        new_tools = await self._mcp_client.discover(servers=newly_connected)
-        new_routing: dict[str, RoutingMeta] = {}
-        for service in new_tools:
-            key = service.name
-            handler = MCPHandler(self._mcp_client, service)
-            self._agents[key] = MCPAgent(handler, service)
-            self._agent_models[key] = "mcp_model"
-            new_routing[key] = RoutingMeta(
-                service.description,
-                _extract_params(service.input_schema),
-            )
-            logger.info(f"Late-discovered MCP intent: {key}")
-        self._discovered_servers.update(newly_connected)
-
-        if new_routing:
-            self._router.add_routes(new_routing)
-
-    async def _prepare(self, query: str, history: list, model_name: str, use_reflection: bool) -> dict:
-        """Build the initial state dict shared by invoke() and stream()."""
-        if not self._graph:
-            raise RuntimeError("Orchestrator not initialized. Call initialize() first.")
-
-        await self._refresh_services()
-
-        model = self._registry.get_talk_model(model_name)
-
-        return {
-            # Input
-            "query": query,
-            "history": history,
-            "model": model,
-            "orchestrator_model": self._orchestrator_model,
-            "rag_model": self._rag_model,
-            "mcp_model": self._mcp_model,
-            "use_reflection": use_reflection,
-            "max_reflections": 2,
-            # Multi-intent
-            "intents": [],
-            "current_intent_index": 0,
-            # Execution
-            "agent_response": "",
-            "agent_success": True,
-            "intent_results": [],
-            # Reflection
-            "reflection_count": 0,
-            "reflection_feedback": None,
-            # Router token tracking
-            "router_input_tokens": 0,
-            "router_output_tokens": 0,
-            # Safety
-            "is_blocked": False,
-            "moderation_reason": None,
-        }
-
-    async def invoke(
-        self,
-        query: str,
-        history: list,
-        model_name: str,
-        use_reflection: bool = False,
-    ) -> dict:
-        initial_state = await self._prepare(query, history, model_name, use_reflection)
-        return await self._graph.ainvoke(initial_state)
 
     async def stream(
         self,
@@ -296,7 +77,24 @@ class Orchestrator:
         use_reflection: bool = False,
     ):
         """Async generator yielding (node_name, updates) for each graph step."""
-        initial_state = await self._prepare(query, history, model_name, use_reflection)
+        if not self._graph:
+            raise RuntimeError("Orchestrator not started. Call startup() first.")
+
+        if self._services and self._router:
+            await self._services.refresh(self._router)
+
+        initial_state = State(
+            query=query,
+            history=history,
+            model=self._registry.get_talk_model(model_name),
+            use_reflection=use_reflection,
+            moderation=None,
+            routing=[],
+            reflection=Reflection(),
+            agent_results=[],
+            token_log=[],
+        )
         async for event in self._graph.astream(initial_state, stream_mode="updates"):
             for node_name, updates in event.items():
                 yield node_name, updates or {}
+
