@@ -1,4 +1,7 @@
+import json
 import logging
+
+from pydantic import BaseModel
 
 from ..llm import Chat, Embeddings
 from .client import RAGClient, RAGResult
@@ -9,8 +12,15 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided context from the knowledge base.
 
-Use the context to answer the user's question. If the context doesn't contain relevant information, say so clearly — do not answer from conversation history or general knowledge.
-Be concise and accurate. Cite the source if available."""
+Use the context to answer the user's question. If the context doesn't contain relevant information, set relevant to false — do not answer from conversation history or general knowledge.
+Be concise and accurate. Cite the source if available.
+
+Respond as JSON: {"answer": "...", "relevant": true/false}"""
+
+
+class RAGResponse(BaseModel):
+    answer: str
+    relevant: bool
 
 
 class RAGAgent:
@@ -58,21 +68,18 @@ class RAGAgent:
             {"role": "user", "content": query},
         ]
 
-        response = model.chat(messages)
+        response = model.chat(messages, schema=RAGResponse)
 
-        # If the LLM itself says the context isn't relevant, mark as failed
-        # so the reflector reroutes immediately instead of retrying.
-        answer = response.text
-        no_info_signals = [
-            "doesn't contain relevant",
-            "does not contain",
-            "no relevant information",
-            "couldn't find relevant",
-            "not mentioned in",
-        ]
-        found_relevant = not any(s in answer.lower() for s in no_info_signals)
+        try:
+            parsed = RAGResponse(**json.loads(response.text))
+            answer = parsed.answer
+            found_relevant = parsed.relevant
+        except Exception:
+            answer = response.text
+            found_relevant = True  # Benefit of the doubt if parsing fails
+
         logger.info(
-            f"RAG response: success={found_relevant} tokens=[{response.input_tokens}/{response.output_tokens}] "
+            f"RAG response: relevant={found_relevant} tokens=[{response.input_tokens}/{response.output_tokens}] "
             f"answer={answer[:120]!r}"
         )
 

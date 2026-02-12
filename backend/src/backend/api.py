@@ -116,7 +116,6 @@ async def chat(request: ChatRequest):
         results.append({
             "answer": ir.get("answer", ""),
             "intent": ir.get("intent", "chat"),
-            "agent": ir.get("agent", ""),
             "model": ir_model,
             "metrics": {
                 "input_tokens": ir_in,
@@ -178,7 +177,6 @@ def _build_result(ir: dict, model_name: str, orch_model=None) -> dict:
     return {
         "answer": ir.get("answer", ""),
         "intent": ir.get("intent", "chat"),
-        "agent": ir.get("agent", ""),
         "model": ir_model,
         "metrics": {
             "input_tokens": ir_in,
@@ -319,8 +317,7 @@ async def chat_stream(request: ChatRequest):
 
                     logger.info(
                         f"SSE finalize: {len(final_results)} results, "
-                        f"intents={[r.get('intent') for r in final_results]}, "
-                        f"agents={[r.get('agent') for r in final_results]}"
+                        f"intents={[r.get('intent') for r in final_results]}"
                     )
                     # Emit answer events for filtered results
                     for ir in final_results:

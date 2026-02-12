@@ -27,8 +27,8 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
     idx = state["current_intent_index"]
     intent_data = state["intents"][idx]
 
-    agent_name = intent_data.get("agent", "TalkAgent")
-    agent = agents.get(agent_name, agents["TalkAgent"])
+    intent = intent_data.get("intent", "chat")
+    agent = agents.get(intent, agents["chat"])
 
     params = intent_data.get("params", {})
 
@@ -41,8 +41,8 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
     if feedback and feedback.get("history"):
         history = feedback["history"]
 
-    # Pick model: TalkAgent uses user's choice, others use their pipeline model.
-    model_key = agent_models.get(agent_name, "mcp_model")
+    # Pick model: chat/smalltalk use user's choice, others use their pipeline model.
+    model_key = agent_models.get(intent, "mcp_model")
     model = state[model_key]
 
     result = await agent.execute(
@@ -58,8 +58,7 @@ async def _agent_node(state: dict, agents: dict, agent_models: dict) -> Command:
 
     # Build per-intent result entry
     entry = {
-        "intent": intent_data.get("intent", "chat"),
-        "agent": agent_name,
+        "intent": intent,
         "model": model.model,
         "answer": result.response,
         "input_tokens": input_tokens,
@@ -115,7 +114,6 @@ async def _blocked_node(state: dict) -> Command:
         update={
             "intent_results": [{
                 "intent": "blocked",
-                "agent": "Moderator",
                 "model": "",
                 "answer": "I'm sorry, but I can't assist with that request.",
                 "input_tokens": 0,
@@ -151,37 +149,37 @@ class Orchestrator:
         self._mcp_client = mcp_client
 
         # Build agents: hardcoded non-MCP agents + dynamic MCP handlers
+        # Keyed by intent name (the single routing key).
         self._agents = {
-            "TalkAgent": TalkAgent(),
-            "SmalltalkAgent": TalkAgent(), # Same underlying logic
-            "RAGAgent": RAGAgent(self._embedder),
+            "chat": TalkAgent(),
+            "smalltalk": TalkAgent(),  # Same underlying logic
+            "rag": RAGAgent(self._embedder),
         }
 
-        # Map agent name → state key for model selection
+        # Map intent → state key for model selection
         agent_models = {
-            "TalkAgent": "model",
-            "SmalltalkAgent": "model",
-            "RAGAgent": "rag_model",
+            "chat": "model",
+            "smalltalk": "model",
+            "rag": "rag_model",
         }
 
         routing: dict[str, RoutingMeta] = {
-            "TalkAgent": RoutingMeta("chat", "Complex general knowledge questions, explanations, or creative writing", {}),
-            "SmalltalkAgent": RoutingMeta("smalltalk", "Simple greetings, social pleasantries, or very brief small talk", {}),
-            "RAGAgent": RoutingMeta("rag", "Knowledge base / documentation questions", {"query": "question"}),
+            "chat": RoutingMeta("Complex general knowledge questions, explanations, or creative writing", {}),
+            "smalltalk": RoutingMeta("Simple greetings, social pleasantries, or very brief small talk", {}),
+            "rag": RoutingMeta("Knowledge base / documentation questions", {"query": "question"}),
         }
 
         for service in discovered:
-            agent_name = f"{service.server}_{service.name}"
+            key = service.name
             handler = MCPHandler(mcp_client, service)
-            self._agents[agent_name] = MCPAgent(handler, service)
-            agent_models[agent_name] = "mcp_model"
-            routing[agent_name] = RoutingMeta(
-                service.name,
+            self._agents[key] = MCPAgent(handler, service)
+            agent_models[key] = "mcp_model"
+            routing[key] = RoutingMeta(
                 service.description,
                 _extract_params(service.input_schema),
             )
             self._discovered_servers.add(service.server)
-            logger.info(f"Registered MCP agent: {agent_name}")
+            logger.info(f"Registered MCP intent: {key}")
 
         self._agent_models = agent_models
         self._graph = self._build_graph(self._agents, agent_models, routing)
@@ -190,7 +188,7 @@ class Orchestrator:
     def _build_graph(self, agents: dict, agent_models: dict, routing: dict[str, RoutingMeta]):
         moderator = Moderator()
         router = Router(routing)
-        reflector = Reflector(available_agents=router.agent_descriptions)
+        reflector = Reflector(available_intents=router.agent_descriptions)
         self._router = router
 
         builder = StateGraph(AgentState)
@@ -229,16 +227,15 @@ class Orchestrator:
         new_tools = await self._mcp_client.discover(servers=newly_connected)
         new_routing: dict[str, RoutingMeta] = {}
         for service in new_tools:
-            agent_name = f"{service.server}_{service.name}"
+            key = service.name
             handler = MCPHandler(self._mcp_client, service)
-            self._agents[agent_name] = MCPAgent(handler, service)
-            self._agent_models[agent_name] = "mcp_model"
-            new_routing[agent_name] = RoutingMeta(
-                service.name,
+            self._agents[key] = MCPAgent(handler, service)
+            self._agent_models[key] = "mcp_model"
+            new_routing[key] = RoutingMeta(
                 service.description,
                 _extract_params(service.input_schema),
             )
-            logger.info(f"Late-discovered MCP agent: {agent_name}")
+            logger.info(f"Late-discovered MCP intent: {key}")
         self._discovered_servers.update(newly_connected)
 
         if new_routing:

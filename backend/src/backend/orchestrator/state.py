@@ -22,7 +22,7 @@ class AgentState(TypedDict, total=False):
     max_reflections: int
 
     # === Multi-intent routing ===
-    intents: list[dict]  # [{"intent": "rag", "agent": "RAGAgent", "params": {...}}, ...]
+    intents: list[dict]  # [{"intent": "rag", "params": {...}}, ...]
     current_intent_index: int
 
     # === Execution ===

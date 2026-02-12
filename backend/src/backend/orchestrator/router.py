@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RoutingMeta:
-    intent: str
     description: str
     params_schema: dict[str, str]
 
@@ -32,9 +31,9 @@ Available agents:
 
 Guidelines:
 1. Be EXTREMELY STRICT. Only route to an agent if the user's query explicitly and clearly requires it.
-2. 'smalltalk' and 'chat' are MUTUALLY EXCLUSIVE for simple queries. Never return both for a single greeting like "Hi".
-3. For simple greetings, social pleasantries, or very brief social small talk (e.g., "Hi", "Hello", "How are you?"), use ONLY the 'smalltalk' intent.
-4. For ANY questions requiring calculation, general knowledge, explanations, reasoning, or creative writing, use the 'chat' intent. This includes brief math expressions like "14*37/53".
+2. 'smalltalk' and 'chat' are ALWAYS MUTUALLY EXCLUSIVE. A single question or statement MUST map to exactly one of them, NEVER both.
+3. 'smalltalk' is ONLY for greetings and social pleasantries with NO informational content (e.g., "Hi", "Hello", "How are you?"). Any question that asks for real information — even if brief or conversational (e.g., "where am I?", "what time is it?") — is NOT smalltalk.
+4. For ANY questions requiring information, calculation, general knowledge, explanations, reasoning, or creative writing, use the 'chat' intent. This includes brief math expressions like "14*37/53".
 5. Do NOT add any extra intents, tools, or parameters that are not directly requested.
 6. Only return multiple intents if the user has provided MULTIPLE distinct and explicit questions or commands (e.g., "Hi, tell me about Mars").
 7. Each intent needs: "intent" (agent type) and "params" (extracted parameters).
@@ -46,26 +45,26 @@ Parameters by intent:
 
 class Router:
     def __init__(self, routing: dict[str, RoutingMeta]):
-        self._intent_to_agent: dict[str, str] = {}
+        self._intent_names: list[str] = []
         self._descriptions: list[str] = []
         self._params_lines: list[str] = []
         self._update(routing)
 
     @property
     def agent_descriptions(self) -> str:
-        """Available agents formatted for the reflector prompt."""
+        """Available intents formatted for the reflector prompt."""
         return "\n".join(self._descriptions)
 
     def add_routes(self, routing: dict[str, RoutingMeta]):
         self._update(routing)
 
     def _update(self, routing: dict[str, RoutingMeta]):
-        for agent_name, meta in routing.items():
-            self._intent_to_agent[meta.intent] = agent_name
-            self._descriptions.append(f"- {meta.intent}: {meta.description}")
-            self._params_lines.append(f"- {meta.intent}: {meta.params_schema}")
+        for intent_name, meta in routing.items():
+            self._intent_names.append(intent_name)
+            self._descriptions.append(f"- {intent_name}: {meta.description}")
+            self._params_lines.append(f"- {intent_name}: {meta.params_schema}")
 
-        intent_names = list(self._intent_to_agent.keys())
+        intent_names = list(dict.fromkeys(self._intent_names))
         IntentEnum = Enum("IntentEnum", {n: n for n in intent_names}, type=str)
 
         class Intent(BaseModel):
@@ -84,14 +83,14 @@ class Router:
 
     async def __call__(self, state: dict) -> Command:
         query = state["query"]
-        exclude_agent = None
-        suggested_agent = None
+        exclude_intent = None
+        suggested_intent = None
 
         feedback = state.get("reflection_feedback")
         if feedback and feedback.get("action") == "reroute":
             query = feedback["query"]
-            exclude_agent = feedback.get("exclude_agent")
-            suggested_agent = feedback.get("suggested_agent")
+            exclude_intent = feedback.get("exclude_intent")
+            suggested_intent = feedback.get("suggested_intent")
 
         result = await self.execute(
             model=state["orchestrator_model"],
@@ -100,23 +99,22 @@ class Router:
         )
 
         # Handle reroute:
-        # If we were rerouting a specific failed agent in a multi-intent sequence,
-        # we want to replace JUST that agent in the original sequence, not the whole list.
+        # If we were rerouting a specific failed intent in a multi-intent sequence,
+        # we want to replace JUST that intent in the original sequence, not the whole list.
         current_intents = list(state.get("intents", []))
-        if exclude_agent and current_intents:
+        if exclude_intent and current_intents:
             idx = state.get("current_intent_index", 0) - 1
-            if 0 <= idx < len(current_intents) and current_intents[idx]["agent"] == exclude_agent:
+            if 0 <= idx < len(current_intents) and current_intents[idx]["intent"] == exclude_intent:
                 # Use the first intent from the new routing as the replacement
                 new_intent = result.intents[0] if result.intents else None
-                if not new_intent or new_intent["agent"] == exclude_agent:
-                    fallback = suggested_agent or "TalkAgent"
+                if not new_intent or new_intent["intent"] == exclude_intent:
+                    fallback = suggested_intent or "chat"
                     new_intent = {
-                        "intent": "chat",
-                        "agent": fallback,
+                        "intent": fallback,
                         "params": {"query": query}
                     }
-                
-                logger.info(f"Rerouting intent {idx}: {exclude_agent} -> {new_intent['agent']}")
+
+                logger.info(f"Rerouting intent {idx}: {exclude_intent} -> {new_intent['intent']}")
                 current_intents[idx] = new_intent
                 return Command(
                     update={
@@ -154,14 +152,13 @@ class Router:
             intents = [
                 {
                     "intent": item.intent.value,
-                    "agent": self._intent_to_agent[item.intent.value],
                     "params": item.params,
                 }
                 for item in result.intents
             ]
         except Exception:
             logger.warning(f"Failed to parse routing result, falling back to chat: {response.text}")
-            intents = [{"intent": "chat", "agent": self._intent_to_agent.get("chat", "TalkAgent"), "params": {}}]
+            intents = [{"intent": "chat", "params": {}}]
 
         logger.info(f"Routed query: {query!r} -> {intents}")
 

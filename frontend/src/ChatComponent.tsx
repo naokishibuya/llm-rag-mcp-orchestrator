@@ -26,7 +26,6 @@ type IntentMetrics = {
 type IntentResult = {
   answer: string;
   intent: string;
-  agent: string;
   model: string;
   metrics: IntentMetrics;
 };
