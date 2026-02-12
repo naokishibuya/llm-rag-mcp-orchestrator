@@ -25,6 +25,7 @@ orchestrator:
   class: backend.llm.ollama.OllamaChat
   model: gemma2:9b
   temperature: 0.0
+  max_reflections: 2
 
 pricing:
   qwen2.5:7b:

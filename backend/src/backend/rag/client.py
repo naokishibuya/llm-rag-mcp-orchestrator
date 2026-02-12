@@ -9,6 +9,7 @@ from ..llm import Embeddings
 @dataclass
 class RAGResult:
     response: str = ""
+    model: str = ""
     tool: str = ""
     args: dict = field(default_factory=dict)
     result: str | dict = ""

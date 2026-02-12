@@ -1,27 +1,16 @@
 import json
 import logging
 import re
-from dataclasses import dataclass
-
-from langgraph.types import Command
 
 from ..llm import Chat
+from .state import Action, TokenUsage
 
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ReflectionResult:
-    action: str
-    score: float | None = None
-    feedback: str = ""
-    suggested_agent: str | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
+SYSTEM_PROMPT = """You are a quality evaluator for an AI assistant's responses.
 
-
-SYSTEM_PROMPT = """You are a quality evaluator for an AI assistant's responses. \
 Analyze the response and determine if it adequately answers the user's query.
 
 Evaluate based on:
@@ -31,33 +20,28 @@ Evaluate based on:
 4. Clarity: Is the response clear and well-structured?
 
 Critical checks:
-- If Agent Success is false, the agent could not handle this query. Recommend "reroute" to a more suitable agent.
-- If the response suggests code or manual steps instead of providing actual data, it likely failed. Recommend "reroute".
+- If Agent Success is false, the current intent could not handle this query. Recommend "retry" with specific feedback.
+- If the response suggests code or manual steps instead of providing actual data, it likely failed. Recommend "retry".
 - If the response confidently states facts that weren't retrieved from a tool or knowledge base, it may be hallucinating.
 - MATH FORMATTING: If the response uses \(, \), \[, or \] for LaTeX, it is INVALID. Recommend "retry" with feedback: "Use $...$ and $$...$$ for math. Delimiters \( \) and \[ \] are not supported."
 
 Respond with JSON:
 {{
-    "action": "accept|retry|reroute",
+    "action": "accept|retry",
     "score": 0.0-1.0,
-    "feedback": "Specific, actionable feedback",
-    "suggested_agent": "agent_name (only if action=reroute)"
+    "feedback": "Specific, actionable feedback"
 }}
 
 Actions:
 - "accept": Response is good enough. Use for scores >= 0.7
-- "retry": Response needs improvement from same agent. Provide specific feedback.
-- "reroute": Wrong agent was used. Suggest correct agent and explain why.
-
-Available agents for rerouting:
-{available_agents}
+- "retry": Response needs improvement. Provide specific feedback.
 
 Be concise but specific in feedback. Focus on actionable improvements."""
 
 EVALUATION_PROMPT = """Evaluate this response:
 
 User Query: {query}
-Agent Used: {agent} (intent: {intent})
+Intent: {intent}
 Agent Success: {success}
 
 Response:
@@ -65,149 +49,51 @@ Response:
 
 Provide your evaluation as JSON."""
 
-VALID_ACTIONS = {"accept", "retry", "reroute"}
+VALID_ACTIONS = {Action.ACCEPT, Action.RETRY}
 
 
 class Reflector:
-    def __init__(self, available_agents: str = ""):
-        self._available_agents = available_agents
+    def __init__(self, *, model: Chat, max_reflections: int):
+        self._model = model
+        self._max_reflections = max_reflections
 
-    async def __call__(self, state: dict) -> Command:
-        idx = state["current_intent_index"] - 1
-        intent_data = state["intents"][idx] if idx < len(state["intents"]) else {}
-
-        # For multi-intent queries, scope evaluation to the current intent
-        # so the stock price agent isn't penalized for not returning weather.
-        params = intent_data.get("params", {})
-        if len(state.get("intents", [])) > 1:
-            params_desc = ", ".join(f"{k}={v}" for k, v in params.items())
-            intent_query = f"{intent_data.get('intent', 'chat')}: {params_desc}" if params_desc else state["query"]
-        else:
-            intent_query = params.get("query") or state["query"]
-
-        result = await self.execute(
-            model=state["orchestrator_model"],
-            query=intent_query,
-            agent_response=state["agent_response"],
-            delegated_agent=intent_data.get("agent", "TalkAgent"),
-            intent=intent_data.get("intent", "chat"),
-            agent_success=state.get("agent_success", True),
-        )
-
-        # For multi-intent queries, we allow reroute (to fix hallucinated tools)
-        # but convert retry to reroute-to-chat to ensure we don't loop forever
-        # on a single intent's details.
-        if len(state.get("intents", [])) > 1:
-            if result.action == "retry":
-                logger.info("Multi-intent query: converting retry to reroute(TalkAgent)")
-                result = ReflectionResult(
-                    action="reroute", score=result.score, feedback=result.feedback,
-                    suggested_agent="TalkAgent",
-                    input_tokens=result.input_tokens, output_tokens=result.output_tokens,
-                )
-            elif result.action == "reroute":
-                logger.info(f"Multi-intent query: allowing reroute from {intent_data.get('agent')}")
-
-        reflection_feedback = {
-            "action": result.action,
-            "score": result.score,
-            "feedback": result.feedback,
-            "suggested_agent": result.suggested_agent,
-        }
-
-        # Write reflection data into the current intent result
-        intent_results = list(state.get("intent_results", []))
-        if intent_results:
-            prev_reflection = intent_results[-1].get("reflection")
-            # Accumulate reflector tokens across rounds
-            ref_in = result.input_tokens
-            ref_out = result.output_tokens
-            if prev_reflection:
-                ref_in += prev_reflection.get("input_tokens", 0)
-                ref_out += prev_reflection.get("output_tokens", 0)
-            intent_results[-1] = {**intent_results[-1], "reflection": {
-                "action": result.action,
-                "score": result.score,
-                "feedback": result.feedback,
-                "input_tokens": ref_in,
-                "output_tokens": ref_out,
-            }}
-
-        updates: dict = {
-            "reflection_count": state.get("reflection_count", 0) + 1,
-            "intent_results": intent_results,
-            "step_input_tokens": result.input_tokens,
-            "step_output_tokens": result.output_tokens,
-        }
-
-        if result.action == "retry":
-            reflection_feedback["query"] = f"Previous reply had an error: {result.feedback}"
-            reflection_feedback["history"] = list(state["history"]) + [
-                {"role": "user", "content": state["query"]},
-                {"role": "assistant", "content": state["agent_response"]},
-            ]
-        elif result.action == "reroute":
-            reflection_feedback["query"] = state["query"]
-            reflection_feedback["exclude_agent"] = intent_data.get("agent")
-
-        # Decide goto — max_reflections overrides retry/reroute
-        reflection_count = state.get("reflection_count", 0) + 1
-        if reflection_count >= state.get("max_reflections", 2):
-            goto = "check_next"
-            # Clear stale feedback so the next intent starts fresh
-            updates["reflection_feedback"] = None
-        elif result.action == "retry":
-            updates["current_intent_index"] = idx  # rewind only when actually retrying
-            updates["reflection_feedback"] = reflection_feedback
-            goto = "agent"
-        elif result.action == "reroute":
-            updates["reflection_feedback"] = reflection_feedback
-            goto = "router"
-        else:
-            updates["reflection_feedback"] = reflection_feedback
-            goto = "check_next"
-
-        return Command(update=updates, goto=goto)
-
-    async def execute(
+    def reflect(
         self,
-        model: Chat,
         query: str,
-        agent_response: str,
-        delegated_agent: str,
+        response: str,
         intent: str,
-        agent_success: bool = True,
-    ) -> ReflectionResult:
-        system_prompt = SYSTEM_PROMPT.format(available_agents=self._available_agents)
+        success: bool = True,
+    ) -> tuple[dict, TokenUsage]:
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": EVALUATION_PROMPT.format(
                 query=query,
                 intent=intent,
-                agent=delegated_agent,
-                response=agent_response,
-                success=agent_success,
+                response=response,
+                success=success,
             )},
         ]
 
-        response = model.chat(messages)
-        logger.debug(f"Reflector raw response: {response.text}")
-        reflection = self._parse_reflection(response.text, agent_success)
+        llm_response = self._model.chat(messages)
+        logger.debug(f"Reflector raw response: {llm_response.text}")
+        info = self._parse_reflection(llm_response.text, success)
 
         logger.info(
-            f"Reflection on {delegated_agent}/{intent}: "
-            f"action={reflection['action']}, score={reflection['score']}, "
-            f"feedback={reflection['feedback']!r}"
+            f"Reflection on {intent}: "
+            f"action={info['action']}, score={info['score']}, "
+            f"feedback={info['feedback']!r}"
         )
 
-        return ReflectionResult(
-            action=reflection["action"],
-            score=reflection["score"],
-            feedback=reflection["feedback"],
-            suggested_agent=reflection.get("suggested_agent"),
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
+        tokens = TokenUsage(
+            model=self._model.model,
+            input_tokens=llm_response.input_tokens,
+            output_tokens=llm_response.output_tokens,
         )
+        return info, tokens
+
+    @property
+    def max_reflections(self) -> int:
+        return self._max_reflections
 
     def _parse_reflection(self, text: str, agent_success: bool = True) -> dict:
         try:
@@ -222,21 +108,18 @@ class Reflector:
 
             if action not in VALID_ACTIONS:
                 logger.warning(f"Invalid reflection action '{action}', defaulting to accept")
-                action = "accept"
+                action = Action.ACCEPT
 
             return {
                 "action": action,
                 "score": float(data["score"]) if "score" in data else None,
                 "feedback": data.get("feedback", ""),
-                "suggested_agent": data.get("suggested_agent"),
             }
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to parse reflection: {e}")
-            # If the agent already reported failure, reroute instead of accepting.
-            fallback = "reroute" if not agent_success else "accept"
+            fallback = Action.RETRY if not agent_success else Action.ACCEPT
             return {
                 "action": fallback,
                 "score": None,
                 "feedback": "Reflection parse failed",
-                "suggested_agent": None,
             }

@@ -7,19 +7,25 @@ A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflec
 ## Architecture
 
 ```
-User ─► React UI ─► FastAPI ─► Orchestrator (LangGraph)
-                                    │
-                        ┌───────────┼───────────┐
-                        ▼           ▼           ▼
-                    RAG Agent   MCP Agents   Talker Agent
-                        │           │
-                   Vector Search   MCP Servers
-                   (numpy)     (Finance, Weather, Tavily)
+User ─► React UI ─► FastAPI (SSE) ─► Orchestrator (LangGraph)
+            │                             │
+        TypeScript             ┌──────────┼──────────┐
+        Tailwind               ▼          ▼          ▼
+                             RAG         MCP       Talker
+                            Agent      Agents     Agent
+                              │           │          │
+                            numpy        MCP       Ollama /
+                            vectors    services    Gemini
+                                       (FastMCP)
+                                          │
+                                   Finance, Weather, Tavily
 ```
 
-**Orchestration flow:** Safety check → Intent routing → Agent execution → Reflection → Response
+**Orchestration flow:** Moderation → Routing → Agent execution → Reflection → Response
 
 The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
+
+<img src="images/orchestration.png" alt="Orchestration flow" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="500"/>
 
 ### Thinking UI & Reflection
 
@@ -100,27 +106,17 @@ Open http://localhost:5173
 
 ## Configuration
 
-All model and service config lives in `backend/config/config.yaml`:
+All model and service config lives in `backend/config/config.yaml`. Each entry under `talk` becomes a selectable model in the UI dropdown:
 
 ```yaml
-chat:
+talk:
   - class: backend.llm.ollama.OllamaChat
     model: qwen2.5:7b
   - class: backend.llm.gemini.GeminiChat
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
 
-embeddings:
-  - class: backend.llm.ollama.OllamaEmbeddings
-    model: nomic-embed-text
-
-mcp_services:
-  finance:
-    url: http://127.0.0.1:8030/mcp
-  weather:
-    url: http://127.0.0.1:8031/mcp
-  tavily:
-    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
+...
 ```
 
 Models requiring API keys are excluded from the UI selectors when credentials are missing.
@@ -134,11 +130,13 @@ backend/
   src/backend/
     api.py                   # REST endpoints
     orchestrator/            # LangGraph state machine
-      orchestrator.py        #   Graph builder + invoke
+      orchestrator.py        #   Lifecycle (startup/shutdown/stream)
+      nodes.py               #   Node functions + graph builder
       router.py              #   Intent classification
       reflector.py           #   Response quality check
       moderator.py           #   Safety filter
       state.py               #   Shared state schema
+      services.py            #   MCP service registry
     rag/                     # RAG agent (numpy vector search)
     mcp/                     # MCP agent (tool calling)
     talk/                    # General conversation agent
