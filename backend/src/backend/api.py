@@ -1,5 +1,3 @@
-"""API routes - LangGraph-based multi-agent orchestration."""
-
 import json
 import logging
 from dataclasses import asdict
@@ -10,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .config import Config
+from .llm import Message, Role
 from .orchestrator import Orchestrator
 from .pricer import Pricer
 
@@ -89,11 +88,11 @@ async def chat(request: ChatRequest):
                     yield _event("thinking", step=f"Moderation: {updates['moderation'].verdict}")
 
                 elif node_name == "router":
-                    intents = updates["routing"]
+                    intents = updates["agent_requests"]
                     yield _event("thinking", step=f"Routing: {', '.join(r.intent for r in intents)}", tokens=tokens)
 
                 elif node_name == "agent":
-                    latest = updates["agent_results"][-1]
+                    latest = updates["agent_responses"][-1]
                     for tool_name in latest.tools_used:
                         yield _event("thinking", step=f"Tool: {tool_name}")
                     yield _event("thinking", step=f"Agent: {latest.intent}", detail=latest.answer, tokens=tokens)
@@ -104,7 +103,7 @@ async def chat(request: ChatRequest):
                     yield _event("thinking", step=f"Reflection: {ref.action}{score_str}", detail=ref.feedback, tokens=tokens)
 
                 elif node_name == "finalize":
-                    for ir in updates["agent_results"]:
+                    for ir in updates["agent_responses"]:
                         yield _event("answer", result=asdict(ir))
                     yield _event("done", moderation=asdict(updates["moderation"]), **pricer.summary())
 
@@ -115,13 +114,13 @@ async def chat(request: ChatRequest):
     return StreamingResponse(_sse_wrap(event_generator()), media_type="text/event-stream")
 
 
-def _parse_request(request: ChatRequest) -> tuple[str, str, list[dict]]:
+def _parse_request(request: ChatRequest) -> tuple[str, str, list[Message]]:
     model_name = request.model or config.default_talk_model()
     query = request.messages[-1].content
-    history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
+    history = [Message(role=m.role, content=m.content) for m in request.messages[:-1]]
     ctx = request.user_context
     if ctx and ctx.summary:
-        history = [{"role": "system", "content": f"User context: {ctx.summary}"}] + history
+        history = [Message(role=Role.SYSTEM, content=f"User context: {ctx.summary}")] + history
     return model_name, query, history
 
 

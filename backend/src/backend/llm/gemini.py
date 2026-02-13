@@ -4,8 +4,9 @@ import os
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+from pydantic import BaseModel
 
-from .protocol import Response
+from .protocol import Message, Response, Role, TokenUsage
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ class GeminiChat:
         self.max_tool_rounds = max_tool_rounds
         self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
-    def chat(self, messages: list[dict[str, str]], schema: type | None = None, tools: dict[str, callable] | None = None) -> Response:
+    def chat(self, messages: list[Message], schema: type[BaseModel] | None = None, tools: dict[str, callable] | None = None) -> Response:
         contents, system_instruction = self._build_contents(messages)
         config = types.GenerateContentConfig(
             temperature=self.temperature,
@@ -40,36 +41,39 @@ class GeminiChat:
             )
         except APIError as e:
             logger.warning(f"Gemini API error: {e.code} {e.message}")
-            return Response(text=f"[Gemini error: {e.message}]", model=self.model)
+            return Response(text=f"[Gemini error: {e.message}]", tokens=TokenUsage(model=self.model))
         except Exception as e:
             logger.warning(f"Gemini unexpected error: {e}")
-            return Response(text=f"[Gemini error: {e}]", model=self.model)
+            return Response(text=f"[Gemini error: {e}]", tokens=TokenUsage(model=self.model))
         resp = self._to_response(response)
         resp.tools_used = self._extract_tool_calls(response)
         return resp
 
     def _build_contents(
-        self, messages: list[dict[str, str]]
+        self, messages: list[Message]
     ) -> tuple[list[types.Content], str | None]:
         contents = []
         system_instruction = None
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
-            if role == "system":
+            if role == Role.SYSTEM:
                 system_instruction = content
-            elif role == "user":
+            elif role == Role.USER:
                 contents.append(types.Content(role="user", parts=[types.Part(text=content)]))
             else:
                 contents.append(types.Content(role="model", parts=[types.Part(text=content)]))
         return contents, system_instruction
 
     def _to_response(self, response) -> Response:
+        usage_metadata = getattr(response, "usage_metadata", None)
         return Response(
             text=response.text or "",
-            input_tokens=response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
-            output_tokens=response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
-            model=self.model,
+            tokens=TokenUsage(
+                model=self.model,
+                input_tokens=usage_metadata.prompt_token_count if usage_metadata else 0,
+                output_tokens=usage_metadata.candidates_token_count if usage_metadata else 0,
+            ),
         )
 
     @staticmethod

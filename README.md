@@ -11,14 +11,14 @@ User ─► React UI ─► FastAPI (SSE) ─► Orchestrator (LangGraph)
             │                             │
         TypeScript             ┌──────────┼──────────┐
         Tailwind               ▼          ▼          ▼
-                             RAG         MCP       Talker
-                            Agent      Agents     Agent
-                              │           │          │
-                            numpy        MCP       Ollama /
+                              RAG        MCP       Talker
+                             Agent      Agents     Agent
+                               │          │          │
+                           embedding     MCP       Ollama,
                             vectors    services    Gemini
-                                       (FastMCP)
+                         (Local data)  (FastMCP)  (Tool use)
                                           │
-                                   Finance, Weather, Tavily
+                               Finance, Weather, Tavily
 ```
 
 **Orchestration flow:** Moderation → Routing → Agent execution → Reflection → Response
@@ -91,6 +91,8 @@ uv sync
 uv run python -m mcp_services.finance.server &
 uv run python -m mcp_services.weather.server &
 ```
+
+Or run individually in separate terminals without sending to background (`&`).
 
 [Tavily](https://tavily.com/) web search works out of the box if `TAVILY_API_KEY` is set in `backend/.env`.
 

@@ -1,6 +1,22 @@
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 
-from .state import Moderation, Verdict
+
+class Verdict(StrEnum):
+    ALLOW = "allow"
+    WARN = "warn"
+    BLOCK = "block"
+
+
+@dataclass
+class Moderation:
+    verdict: Verdict
+    reason: str | None = None
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.verdict == Verdict.BLOCK
 
 
 BLOCK_PATTERNS = [

@@ -1,12 +1,25 @@
 import logging
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field
+from enum import Enum, StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..llm import Chat
-from .state import AgentRequest, TokenUsage
+from ..llm import Chat, Message, Role, TokenUsage
+
+
+class Intent(StrEnum):
+    NONE = ""
+    CHAT = "chat"
+    SMALLTALK = "smalltalk"
+    RAG = "rag"
+    BLOCKED = "blocked"
+
+
+@dataclass
+class AgentRequest:
+    intent: str = Intent.CHAT  # Intent member or custom string for MCP tools
+    params: dict = field(default_factory=dict)
 
 
 logger = logging.getLogger(__name__)
@@ -74,11 +87,11 @@ class Router:
     def route(
         self, query: str, history: list[dict]
     ) -> tuple[list[AgentRequest], TokenUsage]:
-        messages = [{"role": "system", "content": self._system_prompt}]
+        messages = [Message(role=Role.SYSTEM, content=self._system_prompt)]
 
         recent_history = history[-3:] if len(history) > 3 else history
         messages.extend(recent_history)
-        messages.append({"role": "user", "content": query})
+        messages.append(Message(role=Role.USER, content=query))
 
         response = self._model.chat(messages, self._RoutingResult)
 
@@ -97,9 +110,4 @@ class Router:
 
         logger.info(f"Routed query: {query!r} -> {intents}")
 
-        tokens = TokenUsage(
-            model=self._model.model,
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
-        )
-        return intents, tokens
+        return intents, response.tokens

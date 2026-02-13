@@ -1,12 +1,29 @@
 import json
 import logging
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 
-from ..llm import Chat
-from .state import Action, TokenUsage
+from ..llm import Chat, Message, Role, TokenUsage
 
 
 logger = logging.getLogger(__name__)
+
+
+class Action(StrEnum):
+    NONE = ""
+    ACCEPT = "accept"
+    RETRY = "retry"
+
+
+@dataclass
+class Reflection:
+    count: int = 0
+    action: str = Action.NONE
+    score: float | None = None
+    feedback: str = ""
+    retry_query: str | None = None
+    retry_history: list[Message] | None = None
 
 
 SYSTEM_PROMPT = """You are a quality evaluator for an AI assistant's responses.
@@ -65,13 +82,13 @@ class Reflector:
         success: bool = True,
     ) -> tuple[dict, TokenUsage]:
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": EVALUATION_PROMPT.format(
+            Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
+            Message(role=Role.USER, content=EVALUATION_PROMPT.format(
                 query=query,
                 intent=intent,
                 response=response,
                 success=success,
-            )},
+            )),
         ]
 
         llm_response = self._model.chat(messages)
@@ -84,12 +101,7 @@ class Reflector:
             f"feedback={info['feedback']!r}"
         )
 
-        tokens = TokenUsage(
-            model=self._model.model,
-            input_tokens=llm_response.input_tokens,
-            output_tokens=llm_response.output_tokens,
-        )
-        return info, tokens
+        return info, llm_response.tokens
 
     @property
     def max_reflections(self) -> int:

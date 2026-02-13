@@ -5,11 +5,10 @@ from ..llm import Registry
 from ..rag import RAGAgent
 from ..talk import TalkAgent
 from .moderator import Moderator
-from .nodes import build_state_graph
-from .reflector import Reflector
-from .router import Router, RoutingInfo
+from .nodes import State, build_state_graph
+from .reflector import Reflection, Reflector
+from .router import Intent, Router, RoutingInfo
 from .services import ServiceRegistry
-from .state import Intent, Reflection, State
 
 
 logger = logging.getLogger(__name__)
@@ -89,9 +88,9 @@ class Orchestrator:
             model=self._registry.get_talk_model(model_name),
             use_reflection=use_reflection,
             moderation=None,
-            routing=[],
+            agent_requests=[],
             reflection=Reflection(),
-            agent_results=[],
+            agent_responses=[],
             token_log=[],
         )
         async for event in self._graph.astream(initial_state, stream_mode="updates"):
