@@ -1,9 +1,10 @@
 import logging
 
 import ollama
+from pydantic import BaseModel
 from tqdm import tqdm
 
-from .protocol import Response
+from .protocol import Message, Response, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class OllamaChat:
         except ollama.ResponseError:
             _pull_model(model)
 
-    def chat(self, messages: list[dict[str, str]], schema: type | None = None, tools: dict[str, callable] | None = None) -> Response:
+    def chat(self, messages: list[Message], schema: type[BaseModel] | None = None, tools: dict[str, callable] | None = None) -> Response:
         use_tools = tools and schema is None
         max_rounds = self.max_tool_rounds if use_tools else 1
 
@@ -60,9 +61,11 @@ class OllamaChat:
 
         return Response(
             text=response.message.content or "",
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            model=self.model,
+            tokens=TokenUsage(
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            ),
             tools_used=tools_used,
         )
 

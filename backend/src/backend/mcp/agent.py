@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from math import log
 
-from ..llm import Chat
+from ..llm import Chat, Message, Role
 from .client import MCPService
 from .handler import MCPHandler
 
@@ -63,14 +63,14 @@ class MCPAgent:
                 raw_data=raw_data,
                 format_instruction=self._format_hint,
             )
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=Role.USER, content=prompt)]
             response = self._model.chat(messages)
             logger.info(f"MCPAgent response for {self._handler.service.name}: {response.text[:100]}...")
             return MCPResult(
                 response=response.text,
-                model=self._model.model,
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
+                model=response.tokens.model,
+                input_tokens=response.tokens.input_tokens,
+                output_tokens=response.tokens.output_tokens,
             )
         except Exception as e:
             logger.error(f"LLM formatting failed for {self._handler.service.name}: {e}")

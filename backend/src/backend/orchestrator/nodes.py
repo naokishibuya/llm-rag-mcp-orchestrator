@@ -1,24 +1,40 @@
 import logging
+import operator
+from dataclasses import dataclass, field
 from functools import partial
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
 
-from .moderator import Moderator
-from .reflector import Reflector
-from .router import Router
-from .state import (
-    Action,
-    AgentRequest,
-    AgentResult,
-    Intent,
-    Reflection,
-    State,
-    TokenUsage,
-)
+from ..llm import Message, Role, TokenUsage
+from .moderator import Moderation, Moderator
+from .reflector import Action, Reflection, Reflector
+from .router import AgentRequest, Intent, Router
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentResponse:
+    intent: str = Intent.NONE  # Intent member or custom string for MCP tools
+    model: str = ""
+    answer: str = ""
+    success: bool = True
+    tools_used: list[str] = field(default_factory=list)
+
+
+class State(TypedDict, total=False):
+    query: str
+    history: list[Message]
+    model: Any  # Chat instance
+    use_reflection: bool
+    moderation: Moderation | None
+    agent_requests: list[AgentRequest]
+    agent_responses: list[AgentResponse]
+    reflection: Reflection
+    token_log: Annotated[list[TokenUsage], operator.add]
 
 
 def build_state_graph(*, moderator: Moderator, router: Router, agents: dict, reflector: Reflector):
@@ -51,7 +67,7 @@ async def _router_node(state: State, router: Router) -> Command:
 
     return Command(
         update={
-            "routing": intents,
+            "agent_requests": intents,
             "token_log": [tokens],
         },
         goto="agent",
@@ -62,10 +78,10 @@ async def _agent_node(state: State, agents: dict) -> Command:
     refl = state.get("reflection", Reflection())
     is_retry = refl.action == Action.RETRY and refl.retry_query is not None
 
-    agent_results: list[AgentResult] = list(state.get("agent_results", []))
-    idx = len(agent_results) - 1 if is_retry else len(agent_results)
+    agent_responses: list[AgentResponse] = list(state.get("agent_responses", []))
+    idx = len(agent_responses) - 1 if is_retry else len(agent_responses)
 
-    intent_data: AgentRequest = state["routing"][idx]
+    intent_data: AgentRequest = state["agent_requests"][idx]
 
     intent = intent_data.intent
     agent = agents.get(intent, agents[Intent.CHAT])
@@ -87,7 +103,7 @@ async def _agent_node(state: State, agents: dict) -> Command:
         params=params,
     )
 
-    entry = AgentResult(
+    entry = AgentResponse(
         intent=intent,
         model=result.model,
         answer=result.response,
@@ -95,19 +111,19 @@ async def _agent_node(state: State, agents: dict) -> Command:
         tools_used=getattr(result, "tools_used", []),
     )
 
-    if is_retry and agent_results:
-        agent_results[-1] = entry
+    if is_retry and agent_responses:
+        agent_responses[-1] = entry
     else:
-        agent_results.append(entry)
+        agent_responses.append(entry)
 
     tokens = TokenUsage(
         model=result.model,
         input_tokens=getattr(result, "input_tokens", 0),
         output_tokens=getattr(result, "output_tokens", 0),
-    )
+    )  # Agent results aren't Response — manual construction
 
     updates: dict = {
-        "agent_results": agent_results,
+        "agent_responses": agent_responses,
         "token_log": [tokens],
     }
     if not is_retry:
@@ -120,11 +136,11 @@ async def _agent_node(state: State, agents: dict) -> Command:
 
 
 async def _reflector_node(state: State, reflector: Reflector) -> Command:
-    agent_results = state.get("agent_results", [])
-    idx = len(agent_results) - 1
-    latest = agent_results[idx] if agent_results else None
+    agent_responses = state.get("agent_responses", [])
+    idx = len(agent_responses) - 1
+    latest = agent_responses[idx] if agent_responses else None
 
-    intents: list[AgentRequest] = state.get("routing", [])
+    intents: list[AgentRequest] = state.get("agent_requests", [])
     intent_data = intents[idx] if idx < len(intents) else AgentRequest()
 
     agent_response = latest.answer if latest else ""
@@ -160,8 +176,8 @@ async def _reflector_node(state: State, reflector: Reflector) -> Command:
     if info["action"] == Action.RETRY and reflection_count < reflector.max_reflections:
         retry_query = f"Previous reply had an error: {info['feedback']}"
         retry_history = list(state["history"]) + [
-            {"role": "user", "content": state["query"]},
-            {"role": "assistant", "content": agent_response},
+            Message(role=Role.USER, content=state["query"]),
+            Message(role=Role.ASSISTANT, content=agent_response),
         ]
 
     updates: dict = {
@@ -182,25 +198,25 @@ async def _check_next_node(state: State) -> Command:
     if refl.action == Action.RETRY and refl.retry_query:
         return Command(update={}, goto="agent")
 
-    routing = state.get("routing", [])
-    goto = "agent" if len(state.get("agent_results", [])) < len(routing) else "finalize"
+    requests = state.get("agent_requests", [])
+    goto = "agent" if len(state.get("agent_responses", [])) < len(requests) else "finalize"
     return Command(update={}, goto=goto)
 
 
 async def _finalize_node(state: State) -> Command:
     moderation = state.get("moderation")
     if moderation and moderation.is_blocked:
-        agent_results = [
-            AgentResult(
+        agent_responses = [
+            AgentResponse(
                 intent=Intent.BLOCKED,
                 answer="I'm sorry, but I can't assist with that request.",
                 success=False,
             ),
         ]
     else:
-        agent_results = state.get("agent_results", [])
+        agent_responses = state.get("agent_responses", [])
 
     return Command(update={
-        "agent_results": agent_results,
+        "agent_responses": agent_responses,
         "moderation": moderation,
     }, goto=END)

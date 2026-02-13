@@ -3,7 +3,7 @@ import logging
 
 from pydantic import BaseModel
 
-from ..llm import Chat, Embeddings
+from ..llm import Chat, Embeddings, Message, Role
 from .client import RAGClient, RAGResult
 
 
@@ -64,9 +64,9 @@ class RAGAgent:
         context_text = "\n\n---\n\n".join(doc_contexts)
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": f"Context from knowledge base:\n\n{context_text}"},
-            {"role": "user", "content": query},
+            Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
+            Message(role=Role.SYSTEM, content=f"Context from knowledge base:\n\n{context_text}"),
+            Message(role=Role.USER, content=query),
         ]
 
         response = self._model.chat(messages, schema=RAGResponse)
@@ -80,7 +80,7 @@ class RAGAgent:
             found_relevant = True  # Benefit of the doubt if parsing fails
 
         logger.info(
-            f"RAG response: relevant={found_relevant} tokens=[{response.input_tokens}/{response.output_tokens}] "
+            f"RAG response: relevant={found_relevant} tokens=[{response.tokens.input_tokens}/{response.tokens.output_tokens}] "
             f"answer={answer[:120]!r}"
         )
 
@@ -94,6 +94,6 @@ class RAGAgent:
                 "top_score": docs[0].score if docs else 0,
             },
             success=found_relevant,
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
+            input_tokens=response.tokens.input_tokens,
+            output_tokens=response.tokens.output_tokens,
         )

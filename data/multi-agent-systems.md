@@ -26,8 +26,6 @@ This demo implements:
 
 Every LLM call records token usage and estimated cost. This is critical for production systems to monitor spend and optimize prompts.
 
-The `/metrics` endpoint returns:
-
 - Total requests processed
 - Input and output token counts
 - Estimated cost in USD (for cloud providers)
