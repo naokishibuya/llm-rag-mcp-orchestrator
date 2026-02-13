@@ -10,6 +10,10 @@ talk:
     model: claude-haiku-4-5-20251001
     temperature: 0.5
     api_key_env: ANTHROPIC_API_KEY
+  - class: backend.llm.openai.OpenAIChat
+    model: gpt-4.1-nano
+    temperature: 0.5
+    api_key_env: OPENAI_API_KEY
 
 mcp:
   class: backend.llm.ollama.OllamaChat
@@ -41,6 +45,9 @@ pricing:
   claude-haiku-4-5-20251001:
     input: 0.80  # $ per 1M tokens
     output: 4.00
+  gpt-4.1-nano:
+    input: 0.10  # $ per 1M tokens
+    output: 0.40
   gemma2:9b:
     input: 0.00
     output: 0.00

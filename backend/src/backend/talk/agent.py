@@ -39,7 +39,7 @@ class TalkAgent:
         messages.append(Message(role=Role.USER, content=query))
 
         response = model.chat(messages, tools=TOOLS)
-        logger.info(f"Talker response tokens=[{response.tokens.input_tokens}/{response.tokens.output_tokens}]: {response.text}")
+        logger.info(f"Talker [{response.tokens.model}] tokens=[{response.tokens.input_tokens}/{response.tokens.output_tokens}]: {response.text}")
 
         return TalkResult(
             response=response.text,

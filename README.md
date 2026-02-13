@@ -147,10 +147,20 @@ talk:
     model: claude-haiku-4-5-20251001
     temperature: 0.5
     api_key_env: ANTHROPIC_API_KEY
+
+  - class: backend.llm.openai.OpenAIChat
+    model: gpt-4.1-nano
+    temperature: 0.5
+    api_key_env: OPENAI_API_KEY
 ...
 ```
 
 Models requiring API keys are excluded from the UI selectors when credentials are missing.
+
+Note on the `pricing` section:
+- It defines per-model token costs ($ per 1M tokens) used for usage tracking.
+- These values may differ from actual provider pricing. Adjust as needed.
+- Local models default to zero.
 
 ## Project Structure
 
@@ -170,7 +180,7 @@ backend/
     rag/                     # RAG agent (numpy vector search)
     mcp/                     # MCP agent (tool calling)
     talk/                    # General conversation agent
-    llm/                     # Provider abstraction (Ollama, Gemini)
+    llm/                     # Provider abstraction (Ollama, Gemini, Anthropic, OpenAI)
 frontend/                    # React + TypeScript + Tailwind
 services/                    # MCP servers (finance, weather)
 data/                        # Documents for RAG indexing
