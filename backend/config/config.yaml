@@ -6,6 +6,10 @@ talk:
     model: gemini-2.5-flash
     temperature: 0.5
     api_key_env: GEMINI_API_KEY
+  - class: backend.llm.anthropic.AnthropicChat
+    model: claude-haiku-4-5-20251001
+    temperature: 0.5
+    api_key_env: ANTHROPIC_API_KEY
 
 mcp:
   class: backend.llm.ollama.OllamaChat
@@ -34,6 +38,9 @@ pricing:
   gemini-2.5-flash: # may not apply when using free-tier
     input: 0.30  # $ per 1M tokens
     output: 2.50
+  claude-haiku-4-5-20251001:
+    input: 0.80  # $ per 1M tokens
+    output: 4.00
   gemma2:9b:
     input: 0.00
     output: 0.00
