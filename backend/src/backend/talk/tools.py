@@ -1,6 +1,9 @@
 import math
 
+from ..llm import tool
 
+
+@tool
 def calculate(expression: str) -> float:
     """Evaluate a mathematical expression.
 

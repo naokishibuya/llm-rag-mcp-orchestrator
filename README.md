@@ -2,7 +2,23 @@
 
 A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflection. Supports Ollama (local) and Gemini (cloud) simultaneously.
 
-<img src="images/chat-ui.png" alt="Architecture Diagram" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+## Key Features
+
+- **Multi-agent Orchestrator**: LangGraph-based workflow with specialized agents
+- **Moderator**: Safety filter with pattern matching
+- **Router**: Intent classification and routing to specialized agents
+- **Tooluse**: Native LLM tool calling
+- **MCP**: finance, weather, web search as discoverable services
+- **RAG**: Local vector search with embeddings (cosine similarity)
+- **Reflector**: Self-reflection with retry mechanism
+- **Config**: YAML-based model and service registry
+- **UI**: Real-time thinking with streaming responses (SSE)
+
+<br>
+
+<p align="center">
+  <img src="images/chat-ui.png" alt="Chat UI" width="700"/>
+</p>
 
 ## Architecture
 
@@ -25,19 +41,25 @@ User ─► React UI ─► FastAPI (SSE) ─► Orchestrator (LangGraph)
 
 The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
 
-<img src="images/orchestration.png" alt="Orchestration flow" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="500"/>
+<p align="center">
+  <img src="images/orchestration.png" alt="Orchestration flow" width="500"/>
+</p>
 
 ### Thinking UI & Reflection
 
 The UI streams orchestration steps in real time via SSE — routing decisions, agent outputs, and reflection evaluations appear as they happen. The thinking section auto-collapses once the final answer arrives.
 
-<img src="images/thinking-ui.png" alt="Thinking UI showing orchestration steps" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+<p align="center">
+  <img src="images/thinking-ui.png" alt="Thinking UI showing orchestration steps" width="700"/>
+</p>
 
 ### Native Tool Calling
 
 The Talker agent supports LLM tool calling — tools are passed directly to the model and invoked automatically. Currently includes a sandboxed calculator; each tool call appears as a thinking step.
 
-<img src="images/tooluse.png" alt="Tool calling with calculator" style="display: block; margin-left: auto; margin-right: auto; border-radius: 5px;" width="700"/>
+<p align="center">
+  <img src="images/tooluse.png" alt="Tool calling with calculator" width="700"/>
+</p>
 
 ### Model Notes
 
@@ -114,10 +136,17 @@ All model and service config lives in `backend/config/config.yaml`. Each entry u
 talk:
   - class: backend.llm.ollama.OllamaChat
     model: qwen2.5:7b
+    temperature: 0.5
+
   - class: backend.llm.gemini.GeminiChat
     model: gemini-2.5-flash
+    temperature: 0.5
     api_key_env: GEMINI_API_KEY
 
+  - class: backend.llm.anthropic.AnthropicChat
+    model: claude-haiku-4-5-20251001
+    temperature: 0.5
+    api_key_env: ANTHROPIC_API_KEY
 ...
 ```
 
@@ -133,11 +162,10 @@ backend/
     api.py                   # REST endpoints
     orchestrator/            # LangGraph state machine
       orchestrator.py        #   Lifecycle (startup/shutdown/stream)
-      nodes.py               #   Node functions + graph builder
+      nodes.py               #   Graph state, node functions, graph builder
       router.py              #   Intent classification
       reflector.py           #   Response quality check
       moderator.py           #   Safety filter
-      state.py               #   Shared state schema
       services.py            #   MCP service registry
     rag/                     # RAG agent (numpy vector search)
     mcp/                     # MCP agent (tool calling)
