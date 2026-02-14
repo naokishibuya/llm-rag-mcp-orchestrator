@@ -4,73 +4,82 @@ import os
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-from pydantic import BaseModel
 
-from .protocol import Message, Response, Role, TokenUsage
+from ..core import Embedding, Message, Reply, Role, Tokens
 
 
 logger = logging.getLogger(__name__)
 
 
+_ROLE_MAP = {Role.USER: "user", Role.ASSISTANT: "model"}
+
+
 class GeminiChat:
-    def __init__(self, model: str, temperature: float = 0.5, api_key_env: str = "", max_tool_rounds: int = 3):
+    def __init__(self, model: str, api_key_env: str = "", params: dict = None, max_tool_rounds: int = 3):
         self.model = model
-        self.temperature = temperature
+        self.params = params or {}
         self.max_tool_rounds = max_tool_rounds
         self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
-    def chat(self, messages: list[Message], schema: type[BaseModel] | None = None, tools: dict[str, callable] | None = None) -> Response:
-        contents, system_instruction = self._build_contents(messages)
+    def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
+        system, messages = _map_messages(messages)
+        if tools:
+            return self._with_tools(system, messages, tools)
+        return self._plain(system, messages)
+
+    def query(self, messages: list[Message], schema: dict) -> Reply:
+        system, messages = _map_messages(messages)
+        return self._plain(system, messages, schema)
+
+    def _plain(self, system: str | None, messages: list[types.Content], schema: dict | None = None) -> Reply:
         config = types.GenerateContentConfig(
-            temperature=self.temperature,
-            system_instruction=system_instruction,
+            **self.params,
+            system_instruction=system,
         )
         if schema is not None:
             config.response_mime_type = "application/json"
-            config.response_json_schema = schema.model_json_schema()
-        elif tools:
-            config.tools = list(tools.values())
-            config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
-                maximum_remote_calls=self.max_tool_rounds,
-            )
+            config.response_json_schema = schema
         try:
             response = self._client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=config,
+                model=self.model, contents=messages, config=config,
             )
         except APIError as e:
             logger.warning(f"Gemini API error: {e.code} {e.message}")
-            return Response(text=f"[Gemini error: {e.message}]", tokens=TokenUsage(model=self.model))
+            return Reply(text=f"[Gemini error: {e.message}]", model=self.model, success=False)
         except Exception as e:
             logger.warning(f"Gemini unexpected error: {e}")
-            return Response(text=f"[Gemini error: {e}]", tokens=TokenUsage(model=self.model))
-        resp = self._to_response(response)
+            return Reply(text=f"[Gemini error: {e}]", model=self.model, success=False)
+        return self._to_reply(response)
+
+    def _with_tools(self, system: str | None, messages: list[types.Content], tools: dict[str, callable]) -> Reply:
+        config = types.GenerateContentConfig(
+            **self.params,
+            system_instruction=system,
+            tools=list(tools.values()),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                maximum_remote_calls=self.max_tool_rounds,
+            ),
+        )
+        try:
+            response = self._client.models.generate_content(
+                model=self.model, contents=messages, config=config,
+            )
+        except APIError as e:
+            logger.warning(f"Gemini API error: {e.code} {e.message}")
+            return Reply(text=f"[Gemini error: {e.message}]", model=self.model, success=False)
+        except Exception as e:
+            logger.warning(f"Gemini unexpected error: {e}")
+            return Reply(text=f"[Gemini error: {e}]", model=self.model, success=False)
+        resp = self._to_reply(response)
         resp.tools_used = self._extract_tool_calls(response)
         return resp
 
-    def _build_contents(
-        self, messages: list[Message]
-    ) -> tuple[list[types.Content], str | None]:
-        contents = []
-        system_instruction = None
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            if role == Role.SYSTEM:
-                system_instruction = content
-            elif role == Role.USER:
-                contents.append(types.Content(role="user", parts=[types.Part(text=content)]))
-            else:
-                contents.append(types.Content(role="model", parts=[types.Part(text=content)]))
-        return contents, system_instruction
-
-    def _to_response(self, response) -> Response:
+    def _to_reply(self, response) -> Reply:
         usage_metadata = getattr(response, "usage_metadata", None)
-        return Response(
+        return Reply(
             text=response.text or "",
-            tokens=TokenUsage(
-                model=self.model,
+            model=self.model,
+            tokens=Tokens(
                 input_tokens=usage_metadata.prompt_token_count if usage_metadata else 0,
                 output_tokens=usage_metadata.candidates_token_count if usage_metadata else 0,
             ),
@@ -82,11 +91,23 @@ class GeminiChat:
         if not history:
             return []
         return [
-            part.function_call.name
+            f"{part.function_call.name}({dict(part.function_call.args)})"
             for content in history
             for part in (content.parts or [])
             if getattr(part, "function_call", None)
         ]
+
+
+def _map_messages(messages: list[Message]) -> tuple[str | None, list[types.Content]]:
+    system_parts = []
+    mapped = []
+    for msg in messages:
+        role = msg["role"]
+        if role == Role.SYSTEM:
+            system_parts.append(msg["content"])
+        else:
+            mapped.append(types.Content(role=_ROLE_MAP[role], parts=[types.Part(text=msg["content"])]))
+    return "\n\n".join(system_parts) or None, mapped
 
 
 def _resolve_api_key(api_key_env: str = "") -> str:
@@ -106,7 +127,7 @@ class GeminiEmbeddings:
         self.model = model
         self._client = genai.Client(api_key=_resolve_api_key(api_key_env))
 
-    def embed(self, texts: list[str] | str) -> list[list[float]] | list[float]:
+    def embed(self, texts: list[str] | str) -> Embedding | list[Embedding]:
         if isinstance(texts, str):
             texts = [texts]
         result = self._client.models.embed_content(

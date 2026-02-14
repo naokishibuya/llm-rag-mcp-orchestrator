@@ -1,4 +1,6 @@
 import math
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from ..llm import tool
 
@@ -18,4 +20,19 @@ def calculate(expression: str) -> float:
     return float(eval(expression, {"__builtins__": {}}, allowed))
 
 
-TOOLS = {"calculate": calculate}
+@tool
+def get_current_time(tz: str = "UTC") -> str:
+    """Get the current date and time.
+
+    Args:
+        tz: IANA timezone name, e.g. "Asia/Tokyo", "America/New_York". Defaults to "UTC".
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except KeyError:
+        zone = timezone.utc
+    now = datetime.now(zone)
+    return now.strftime(f"%Y-%m-%d %H:%M:%S %Z ({tz})")
+
+
+TOOLS = {"calculate": calculate, "get_current_time": get_current_time}

@@ -2,12 +2,14 @@ import logging
 
 from ..config import Config
 from ..llm import Registry
-from ..rag import RAGAgent
+from ..rag import RAGAgent, RAGClient
 from ..talk import TalkAgent
 from .moderator import Moderator
+from ..core import UserContext
 from .nodes import State, build_state_graph
 from .reflector import Reflection, Reflector
-from .router import Intent, Router, RoutingInfo
+from .router import Intent
+from .router import Router, RoutingInfo
 from .services import ServiceRegistry
 
 
@@ -34,7 +36,10 @@ class Orchestrator:
         agents = {
             Intent.CHAT: TalkAgent(),
             Intent.SMALLTALK: TalkAgent(),
-            Intent.RAG: RAGAgent(self._registry.resolve_model("rag"), self._registry.resolve_embeddings()),
+            Intent.RAG: RAGAgent(
+                self._registry.resolve_model("rag"),
+                RAGClient(self._registry.resolve_embeddings()),
+                top_k=self._config.rag_top_k),
             **self._services.agents,
         }
 
@@ -73,6 +78,7 @@ class Orchestrator:
         query: str,
         history: list,
         model_name: str,
+        context: UserContext,
         use_reflection: bool = False,
     ):
         """Async generator yielding (node_name, updates) for each graph step."""
@@ -87,10 +93,11 @@ class Orchestrator:
             history=history,
             model=self._registry.get_talk_model(model_name),
             use_reflection=use_reflection,
+            context=context,
             moderation=None,
-            agent_requests=[],
+            routes=[],
+            cursor=0,
             reflection=Reflection(),
-            agent_responses=[],
             token_log=[],
         )
         async for event in self._graph.astream(initial_state, stream_mode="updates"):

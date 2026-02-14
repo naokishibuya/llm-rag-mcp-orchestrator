@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
@@ -5,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..llm import Chat, Message, Role, TokenUsage
+from ..core import Chat, Message, Reply, Role, UserContext
 
 
 class Intent(StrEnum):
@@ -17,9 +18,10 @@ class Intent(StrEnum):
 
 
 @dataclass
-class AgentRequest:
+class Route:
     intent: str = Intent.CHAT  # Intent member or custom string for MCP tools
     params: dict = field(default_factory=dict)
+    reply: Reply | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -70,44 +72,54 @@ class Router:
         intent_names = list(dict.fromkeys(self._intent_names))
         IntentEnum = Enum("IntentEnum", {n: n for n in intent_names}, type=str)
 
-        class Intent(BaseModel):
+        class Route(BaseModel):
             intent: IntentEnum  # type: ignore[valid-type]
             params: dict[str, Any] = Field(default_factory=dict)
 
-        class RoutingResult(BaseModel):
-            intents: list[Intent]
+        class Routes(BaseModel):
+            routes: list[Route]
 
-        self._RoutingResult = RoutingResult
+        self._schema = Routes.model_json_schema()
         self._system_prompt = SYSTEM_PROMPT.format(
             descriptions="\n".join(self._descriptions),
             params_lines="\n".join(self._params_lines),
         )
         logger.info("Router prompt:\n%s", self._system_prompt)
 
-    def route(
-        self, query: str, history: list[dict]
-    ) -> tuple[list[AgentRequest], TokenUsage]:
-        messages = [Message(role=Role.SYSTEM, content=self._system_prompt)]
+    async def act(self, *, query: str, context: UserContext, **kwargs) -> Reply:
+        system = self._system_prompt
+        if context:
+            system += f"\n\n{context}"
 
-        recent_history = history[-3:] if len(history) > 3 else history
-        messages.extend(recent_history)
+        messages = [Message(role=Role.SYSTEM, content=system)]
+
+        history = kwargs.get("history", [])
+        recent = history[-3:] if len(history) > 3 else history
+        messages.extend(recent)
         messages.append(Message(role=Role.USER, content=query))
 
-        response = self._model.chat(messages, self._RoutingResult)
+        logger.debug("Router messages: %s", [{"role": m["role"], "content": m["content"][:100]} for m in messages])
+
+        return self._model.query(messages, self._schema)
+
+    async def route(
+        self, query: str, history: list[dict], context: UserContext,
+    ) -> tuple[list[Route], Reply]:
+        reply = await self.act(query=query, context=context, history=history)
 
         try:
-            result = self._RoutingResult.model_validate_json(response.text)
+            result = json.loads(reply.text)
             intents = [
-                AgentRequest(
-                    intent=item.intent.value,
-                    params=item.params,
+                Route(
+                    intent=route["intent"],
+                    params=route.get("params", {}),
                 )
-                for item in result.intents
+                for route in result["routes"]
             ]
         except Exception:
-            logger.warning(f"Failed to parse routing result, falling back to chat: {response.text}")
-            intents = [AgentRequest()]
+            logger.warning(f"Failed to parse routing result, falling back to chat: {reply.text}")
+            intents = [Route()]
 
         logger.info(f"Routed query: {query!r} -> {intents}")
 
-        return intents, response.tokens
+        return intents, reply

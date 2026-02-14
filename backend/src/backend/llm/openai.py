@@ -3,61 +3,76 @@ import logging
 import os
 
 import openai
-from pydantic import BaseModel
 
-from .protocol import Message, Response, Role, TokenUsage
+from ..core import Message, Reply, Role, Tokens
 
 
 logger = logging.getLogger(__name__)
 
 
+_ROLE_MAP = {Role.SYSTEM: "system", Role.USER: "user", Role.ASSISTANT: "assistant"}
+
+
 class OpenAIChat:
-    def __init__(self, model: str, temperature: float = 0.5, api_key_env: str = "", max_tool_rounds: int = 3):
+    def __init__(self, model: str, api_key_env: str = "", params: dict = None, max_tool_rounds: int = 3):
         self.model = model
-        self.temperature = temperature
+        self.params = params or {}
         self.max_tool_rounds = max_tool_rounds
         self._client = openai.OpenAI(api_key=_resolve_api_key(api_key_env))
 
-    def chat(
-        self, messages: list[Message], schema: type[BaseModel] | None = None, tools: dict[str, callable] | None = None
-    ) -> Response:
-        msgs = _build_messages(messages)
-        use_tools = tools and schema is None
+    def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
+        messages = _map_messages(messages)
+        if tools:
+            return self._with_tools(messages, tools)
+        return self._plain(messages)
 
+    def query(self, messages: list[Message], schema: dict) -> Reply:
+        return self._plain(_map_messages(messages), schema)
+
+    def _plain(self, messages: list[dict], schema: dict | None = None) -> Reply:
         kwargs: dict = {}
         if schema is not None:
             kwargs["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": "structured_output", "strict": False, "schema": schema.model_json_schema()},
+                "json_schema": {"name": "structured_output", "strict": False, "schema": schema},
             }
-        elif use_tools:
-            kwargs["tools"] = [_to_openai_tool(fn) for fn in tools.values()]
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model, messages=messages, **self.params, **kwargs
+            )
+        except openai.APIError as e:
+            logger.warning("OpenAI API error: %s", e.message)
+            return Reply(text=f"[OpenAI error: {e.message}]", model=self.model, success=False)
 
+        return Reply(
+            text=response.choices[0].message.content or "",
+            model=self.model,
+            tokens=Tokens(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+            ),
+        )
+
+    def _with_tools(self, messages: list[dict], tools: dict[str, callable]) -> Reply:
+        msgs = list(messages)
+        openai_tools = [_to_openai_tool(fn) for fn in tools.values()]
         input_tokens = 0
         output_tokens = 0
         tools_used: list[str] = []
-        max_rounds = self.max_tool_rounds if use_tools else 1
 
-        for _ in range(max_rounds):
+        for _ in range(self.max_tool_rounds):
             try:
                 response = self._client.chat.completions.create(
-                    model=self.model, temperature=self.temperature, messages=msgs, **kwargs
+                    model=self.model, messages=msgs, tools=openai_tools, **self.params,
                 )
             except openai.APIError as e:
                 logger.warning("OpenAI API error: %s", e.message)
-                return Response(text=f"[OpenAI error: {e.message}]", tokens=TokenUsage(model=self.model))
+                return Reply(text=f"[OpenAI error: {e.message}]", model=self.model, success=False)
 
             input_tokens += response.usage.prompt_tokens
             output_tokens += response.usage.completion_tokens
 
             choice = response.choices[0]
-
-            if schema is not None:
-                return Response(
-                    text=choice.message.content or "",
-                    tokens=TokenUsage(model=self.model, input_tokens=input_tokens, output_tokens=output_tokens),
-                )
-
             tool_calls = choice.message.tool_calls
             if not tool_calls:
                 break
@@ -73,20 +88,21 @@ class OpenAIChat:
                         result = str(fn(**args))
                     except Exception as e:
                         result = f"Error: {e}"
-                    tools_used.append(tc.function.name)
+                    tools_used.append(f"{tc.function.name}({tc.function.arguments})")
                 logger.info("Tool %s(%s) -> %s", tc.function.name, tc.function.arguments, result)
                 msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
         text = choice.message.content or ""
-        return Response(
+        return Reply(
             text=text,
-            tokens=TokenUsage(model=self.model, input_tokens=input_tokens, output_tokens=output_tokens),
+            model=self.model,
+            tokens=Tokens(input_tokens=input_tokens, output_tokens=output_tokens),
             tools_used=tools_used,
         )
 
 
-def _build_messages(messages: list[Message]) -> list[dict]:
-    return [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+def _map_messages(messages: list[Message]) -> list[dict]:
+    return [{"role": _ROLE_MAP[msg["role"]], "content": msg["content"]} for msg in messages]
 
 
 def _to_openai_tool(fn) -> dict:

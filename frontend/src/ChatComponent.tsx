@@ -21,7 +21,7 @@ type ReflectionInfo = {
 type AgentResult = {
   intent: string;
   model: string;
-  answer: string;
+  text: string;
   reflection: ReflectionInfo | null;
   tools_used: string[];
 };
@@ -181,7 +181,7 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
             {meta.results.map((result, i) => (
               <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-gray-300' : ''}>
                 <div className="prose prose-sm max-w-none">
-                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{result.answer}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{result.text}</Markdown>
                 </div>
               </div>
             ))}
@@ -303,7 +303,7 @@ export default function ChatComponent({ model }: ChatProps) {
           }
 
           // Update the assistant message in-place
-          const content = results.map(r => r.answer).join('\n\n');
+          const content = results.map(r => r.text).join('\n\n');
           const meta: ResponseMeta | undefined = results.length > 0
             ? { results, moderation, total }
             : undefined;
@@ -323,7 +323,7 @@ export default function ChatComponent({ model }: ChatProps) {
       }
 
       // Finalize: mark streaming as done
-      const finalContent = results.map(r => r.answer).join('\n\n');
+      const finalContent = results.map(r => r.text).join('\n\n');
       setMessages(prev => {
         const updated = [...prev];
         updated[assistantIdx] = {

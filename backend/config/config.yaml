@@ -1,38 +1,60 @@
 talk:
-  - class: backend.llm.ollama.OllamaChat
-    model: qwen2.5:7b
-    temperature: 0.5
-  - class: backend.llm.gemini.GeminiChat
-    model: gemini-2.5-flash
-    temperature: 0.5
-    api_key_env: GEMINI_API_KEY
-  - class: backend.llm.anthropic.AnthropicChat
-    model: claude-haiku-4-5-20251001
-    temperature: 0.5
-    api_key_env: ANTHROPIC_API_KEY
-  - class: backend.llm.openai.OpenAIChat
-    model: gpt-4.1-nano
-    temperature: 0.5
-    api_key_env: OPENAI_API_KEY
+  llm:
+    - class: backend.llm.ollama.OllamaChat
+      model: qwen2.5:7b
+      params:
+        temperature: 0.5
+    - class: backend.llm.gemini.GeminiChat
+      model: gemini-2.5-flash
+      api_key_env: GEMINI_API_KEY
+      params:
+        temperature: 0.5
+    - class: backend.llm.anthropic.AnthropicChat
+      model: claude-haiku-4-5-20251001
+      api_key_env: ANTHROPIC_API_KEY
+      params:
+        temperature: 0.5
+    - class: backend.llm.openai.OpenAIChat
+      model: gpt-4.1-nano
+      api_key_env: OPENAI_API_KEY
+      params:
+        temperature: 0.5
 
 mcp:
-  class: backend.llm.ollama.OllamaChat
-  model: qwen2.5:7b
-  temperature: 0.0
+  llm:
+    class: backend.llm.ollama.OllamaChat
+    model: qwen2.5:7b
+    params:
+      temperature: 0.0
+  services:
+    finance:
+      url: http://127.0.0.1:8030/mcp
+      format: "Markdown table with bold headers: **Symbol**, **Price**, **Change**, **Market Cap**. Use bold for values too."
+    weather:
+      url: http://127.0.0.1:8031/mcp
+      format: "Bullet list with bold labels: **City**, **Temperature**, **Condition**, **Humidity**."
+    tavily:
+      url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
+      timeout: 30
+      format: "Bulleted list of results, each with a markdown link title and a one-line summary."
 
 rag:
-  class: backend.llm.ollama.OllamaChat
-  model: qwen2.5:7b
-  temperature: 0.0
-
-embedding:
-  class: backend.llm.ollama.OllamaEmbeddings
-  model: nomic-embed-text
+  llm:
+    class: backend.llm.ollama.OllamaChat
+    model: qwen2.5:7b
+    params:
+      temperature: 0.0
+  embeddings:
+    class: backend.llm.ollama.OllamaEmbeddings
+    model: nomic-embed-text
+  top_k: 3
 
 orchestrator:
-  class: backend.llm.ollama.OllamaChat
-  model: gemma2:9b
-  temperature: 0.0
+  llm:
+    class: backend.llm.ollama.OllamaChat
+    model: gemma2:9b
+    params:
+      temperature: 0.0
   max_reflections: 2
 
 pricing:
@@ -54,18 +76,3 @@ pricing:
   nomic-embed-text:
     input: 0.00
     output: 0.00
-
-metrics:
-  enabled: true
-
-mcp_services:
-  finance:
-    url: http://127.0.0.1:8030/mcp
-    format: "Markdown table with bold headers: **Symbol**, **Price**, **Change**, **Market Cap**. Use bold for values too."
-  weather:
-    url: http://127.0.0.1:8031/mcp
-    format: "Bullet list with bold labels: **City**, **Temperature**, **Condition**, **Humidity**."
-  tavily:
-    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
-    timeout: 30
-    format: "Bulleted list of results, each with a markdown link title and a one-line summary."

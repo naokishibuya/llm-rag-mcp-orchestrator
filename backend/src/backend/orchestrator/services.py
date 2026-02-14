@@ -1,6 +1,6 @@
 import logging
 
-from ..llm import Chat
+from ..core import Chat
 from ..mcp import MCPAgent, MCPClient, MCPHandler
 from .router import Router, RoutingInfo
 
