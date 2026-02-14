@@ -8,9 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .config import Config
-from .llm import Message, Role
+from .core import Message, UserContext
 from .orchestrator import Orchestrator
-from .pricer import Pricer
+from .llm import Pricer
 
 
 logger = logging.getLogger(__name__)
@@ -29,23 +29,6 @@ router = APIRouter()
 class MessageModel(BaseModel):
     role: str
     content: str
-
-
-class UserContext(BaseModel):
-    city: str | None = None
-    timezone: str | None = None
-    local_time: str | None = None
-
-    @property
-    def summary(self) -> str | None:
-        parts = []
-        if self.city:
-            parts.append(self.city)
-        if self.local_time:
-            parts.append(self.local_time)
-        if self.timezone:
-            parts.append(f"({self.timezone})")
-        return " ".join(parts) if parts else None
 
 
 class ChatRequest(BaseModel):
@@ -70,7 +53,7 @@ async def chat(request: ChatRequest):
             yield _event("error", message="No messages provided")
         return StreamingResponse(_sse_wrap(empty()), media_type="text/event-stream")
 
-    model_name, query, history = _parse_request(request)
+    model_name, query, history, context = _parse_request(request)
 
     async def event_generator():
         pricer = Pricer(config.pricing)
@@ -81,21 +64,23 @@ async def chat(request: ChatRequest):
                 history=history,
                 model_name=model_name,
                 use_reflection=request.use_reflection,
+                context=context,
             ):
-                tokens = pricer.add(updates.get("token_log", []))
+                token_log = updates.get("token_log", [])
+                tokens = pricer.add(*token_log[0]) if token_log else None
 
                 if node_name == "moderation":
                     yield _event("thinking", step=f"Moderation: {updates['moderation'].verdict}")
 
                 elif node_name == "router":
-                    intents = updates["agent_requests"]
-                    yield _event("thinking", step=f"Routing: {', '.join(r.intent for r in intents)}", tokens=tokens)
+                    routes = updates["routes"]
+                    yield _event("thinking", step=f"Routing: {', '.join(r.intent for r in routes)}", tokens=tokens)
 
                 elif node_name == "agent":
-                    latest = updates["agent_responses"][-1]
-                    for tool_name in latest.tools_used:
+                    route = updates["routes"][updates.get("cursor", 0)]
+                    for tool_name in route.reply.tools_used:
                         yield _event("thinking", step=f"Tool: {tool_name}")
-                    yield _event("thinking", step=f"Agent: {latest.intent}", detail=latest.answer, tokens=tokens)
+                    yield _event("thinking", step=f"Agent: {route.intent}", detail=route.reply.text, tokens=tokens)
 
                 elif node_name == "reflector":
                     ref = updates["reflection"]
@@ -103,8 +88,8 @@ async def chat(request: ChatRequest):
                     yield _event("thinking", step=f"Reflection: {ref.action}{score_str}", detail=ref.feedback, tokens=tokens)
 
                 elif node_name == "finalize":
-                    for ir in updates["agent_responses"]:
-                        yield _event("answer", result=asdict(ir))
+                    for route in updates["routes"]:
+                        yield _event("answer", result={"intent": route.intent, **asdict(route.reply)})
                     yield _event("done", moderation=asdict(updates["moderation"]), **pricer.summary())
 
         except Exception as e:
@@ -114,14 +99,11 @@ async def chat(request: ChatRequest):
     return StreamingResponse(_sse_wrap(event_generator()), media_type="text/event-stream")
 
 
-def _parse_request(request: ChatRequest) -> tuple[str, str, list[Message]]:
+def _parse_request(request: ChatRequest) -> tuple[str, str, list[Message], UserContext]:
     model_name = request.model or config.default_talk_model()
     query = request.messages[-1].content
     history = [Message(role=m.role, content=m.content) for m in request.messages[:-1]]
-    ctx = request.user_context
-    if ctx and ctx.summary:
-        history = [Message(role=Role.SYSTEM, content=f"User context: {ctx.summary}")] + history
-    return model_name, query, history
+    return model_name, query, history, request.user_context or UserContext()
 
 
 def _event(type: str, **kwargs) -> dict:

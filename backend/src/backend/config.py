@@ -8,21 +8,19 @@ class Config:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
 
-        self._talk = _dict_to_list(data["talk"])
-        self._embedding = data["embedding"]
+        self._talk = _dict_to_list(data["talk"]["llm"])
+        self._embedding = data["rag"]["embeddings"]
 
-        # Separate orchestrator behavior settings from model config
-        orch_cfg = dict(data["orchestrator"])
-        self._max_reflections: int = orch_cfg.pop("max_reflections", 2)
+        self._max_reflections: int = data["orchestrator"].get("max_reflections", 2)
+        self._rag_top_k: int = data["rag"].get("top_k", 3)
         self._pipeline_models = {
-            "mcp": data["mcp"],
-            "rag": data["rag"],
-            "orchestrator": orch_cfg,
+            "mcp": data["mcp"]["llm"],
+            "rag": data["rag"]["llm"],
+            "orchestrator": data["orchestrator"]["llm"],
         }
 
         self._pricing = data["pricing"]
-        self._mcp_services = data["mcp_services"]
-        self._metrics = data["metrics"]
+        self._mcp_services = data["mcp"].get("services", {})
 
     @property
     def talk(self) -> list[dict]:
@@ -54,16 +52,16 @@ class Config:
         return self._max_reflections
 
     @property
+    def rag_top_k(self) -> int:
+        return self._rag_top_k
+
+    @property
     def pricing(self) -> dict:
         return self._pricing
 
     @property
     def mcp_services(self) -> dict:
         return self._mcp_services
-
-    @property
-    def metrics(self) -> dict:
-        return self._metrics
 
 
 def _dict_to_list(cfg) -> list[dict]:

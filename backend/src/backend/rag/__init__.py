@@ -1,5 +1,5 @@
-from .client import RAGClient, RAGResult
+from .client import RAGClient
 from .agent import RAGAgent
 
 
-__all__ = ["RAGAgent", "RAGClient", "RAGResult"]
+__all__ = ["RAGAgent", "RAGClient"]

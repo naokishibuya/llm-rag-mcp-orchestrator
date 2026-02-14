@@ -3,8 +3,8 @@ import logging
 
 from pydantic import BaseModel
 
-from ..llm import Chat, Embeddings, Message, Role
-from .client import RAGClient, RAGResult
+from ..core import Chat, Message, Reply, Role, UserContext
+from .client import RAGClient
 
 
 logger = logging.getLogger(__name__)
@@ -24,76 +24,74 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, model: Chat, embedder: Embeddings):
+    def __init__(self, model: Chat, index: RAGClient, top_k: int = 3):
         self._model = model
-        self._embedder = embedder
-        self.index = RAGClient()
+        self._index = index
+        self._top_k = top_k
 
-    async def execute(
+    async def act(
         self,
         *,
         query: str,
+        context: UserContext,
         params: dict = None,
         **_,
-    ) -> RAGResult:
+    ) -> Reply:
         params = params or {}
         search_query = params.get("query", query)
         logger.info(f"RAG search query: {search_query!r}")
 
-        docs = self.index.search(search_query, self._embedder, 3)
-        for i, doc in enumerate(docs or []):
-            logger.info(f"  doc[{i}]: score={doc.score:.3f} source={doc.document.source!r} content={doc.document.content[:80]!r}")
-
-        if not docs or (docs and docs[0].score < 0.3):
-            logger.info("RAG: no relevant docs found (score < 0.3 or empty)")
-            return RAGResult(
-                response="I couldn't find relevant information in the knowledge base for your question.",
+        knowledge = self._retrieve(search_query)
+        if knowledge is None:
+            return Reply(
+                text="I couldn't find relevant information in the knowledge base for your question.",
                 model=self._model.model,
-                tool="search_knowledge_base",
-                args={"query": search_query},
-                result={"docs_found": 0},
                 success=False,
             )
 
-        doc_contexts = []
-        for doc in docs:
-            if doc.score >= 0.3:
-                source = f" (Source: {doc.document.source})" if doc.document.source else ""
-                doc_contexts.append(f"{doc.document.content[:500]}{source}")
-
-        context_text = "\n\n---\n\n".join(doc_contexts)
+        system = f"{SYSTEM_PROMPT}\n\nContext from knowledge base:\n\n{knowledge}"
+        if context:
+            system += f"\n\n{context}"
 
         messages = [
-            Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
-            Message(role=Role.SYSTEM, content=f"Context from knowledge base:\n\n{context_text}"),
+            Message(role=Role.SYSTEM, content=system),
             Message(role=Role.USER, content=query),
         ]
 
-        response = self._model.chat(messages, schema=RAGResponse)
+        reply = self._model.query(messages, RAGResponse.model_json_schema())
+        if not reply.success:
+            return reply
 
         try:
-            parsed = RAGResponse(**json.loads(response.text))
+            parsed = RAGResponse(**json.loads(reply.text))
             answer = parsed.answer
             found_relevant = parsed.relevant
         except Exception:
-            answer = response.text
+            answer = reply.text
             found_relevant = True  # Benefit of the doubt if parsing fails
 
-        logger.info(
-            f"RAG response: relevant={found_relevant} tokens=[{response.tokens.input_tokens}/{response.tokens.output_tokens}] "
-            f"answer={answer[:120]!r}"
+        logger.info(f"RAG {reply} relevant={found_relevant}")
+
+        return Reply(
+            text=answer,
+            model=reply.model,
+            success=found_relevant,
+            tokens=reply.tokens,
         )
 
-        return RAGResult(
-            response=answer,
-            model=self._model.model,
-            tool="search_knowledge_base",
-            args={"query": search_query},
-            result={
-                "docs_found": len([d for d in docs if d.score >= 0.3]),
-                "top_score": docs[0].score if docs else 0,
-            },
-            success=found_relevant,
-            input_tokens=response.tokens.input_tokens,
-            output_tokens=response.tokens.output_tokens,
-        )
+    def _retrieve(self, query: str) -> str | None:
+        docs = self._index.search(query, self._top_k)
+        for i, doc in enumerate(docs or []):
+            logger.info(f"  doc[{i}]: score={doc.score:.3f} source={doc.document.source!r} content={doc.document.content[:80]!r}")
+
+        if not docs or docs[0].score < 0.3:
+            logger.info("RAG: no relevant docs found (score < 0.3 or empty)")
+            return None
+
+        chunks = []
+        for doc in docs:
+            if doc.score >= 0.3:
+                source = f" (Source: {doc.document.source})" if doc.document.source else ""
+                chunks.append(f"{doc.document.content[:500]}{source}")
+
+        return "\n\n---\n\n".join(chunks)

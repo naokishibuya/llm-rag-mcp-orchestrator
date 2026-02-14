@@ -1,21 +1,12 @@
 import logging
-from dataclasses import dataclass, field
 
-from ..llm import Chat, Message, Role
+from ..core import Chat, Message, Reply, Role
+from ..core.agent import UserContext
+
 from .tools import TOOLS
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TalkResult:
-    response: str
-    model: str = ""
-    success: bool = True
-    input_tokens: int = 0
-    output_tokens: int = 0
-    tools_used: list[str] = field(default_factory=list)
 
 
 SYSTEM_PROMPT = """You are a helpful, friendly assistant.
@@ -31,20 +22,18 @@ CRITICAL MATH RULES:
 
 
 class TalkAgent:
-    async def execute(
-        self, *, model: Chat, query: str, history: list[dict], **_
-    ) -> TalkResult:
-        messages = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
+    async def act(
+        self, *, model: Chat, query: str, history: list[dict],
+        context: UserContext, **_,
+    ) -> Reply:
+        system = SYSTEM_PROMPT
+        if context:
+            system += f"\n\n{context}"
+
+        messages = [Message(role=Role.SYSTEM, content=system)]
         messages.extend(history)
         messages.append(Message(role=Role.USER, content=query))
 
-        response = model.chat(messages, tools=TOOLS)
-        logger.info(f"Talker [{response.tokens.model}] tokens=[{response.tokens.input_tokens}/{response.tokens.output_tokens}]: {response.text}")
-
-        return TalkResult(
-            response=response.text,
-            model=response.tokens.model,
-            input_tokens=response.tokens.input_tokens,
-            output_tokens=response.tokens.output_tokens,
-            tools_used=response.tools_used,
-        )
+        reply = model.ask(messages, tools=TOOLS)
+        logger.info(f"Talker {reply}")
+        return reply

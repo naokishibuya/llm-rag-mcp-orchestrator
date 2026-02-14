@@ -1,7 +1,7 @@
 import importlib
 
 from ..config import Config
-from .protocol import Chat, Embeddings
+from ..core import Chat, Embeddings
 
 
 class Registry:

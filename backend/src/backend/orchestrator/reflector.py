@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ..llm import Chat, Message, Role, TokenUsage
+from ..core import Chat, Message, Reply, Role, UserContext
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,10 @@ class Reflection:
     feedback: str = ""
     retry_query: str | None = None
     retry_history: list[Message] | None = None
+
+    @property
+    def is_retry(self) -> bool:
+        return self.action == Action.RETRY and self.retry_query is not None
 
 
 SYSTEM_PROMPT = """You are a quality evaluator for an AI assistant's responses.
@@ -74,26 +78,34 @@ class Reflector:
         self._model = model
         self._max_reflections = max_reflections
 
-    def reflect(
+    async def act(self, *, query: str, context: UserContext, **kwargs) -> Reply:
+        system = SYSTEM_PROMPT
+        if context:
+            system += f"\n\n{context}"
+        messages = [
+            Message(role=Role.SYSTEM, content=system),
+            Message(role=Role.USER, content=query),
+        ]
+        return self._model.ask(messages)
+
+    async def reflect(
         self,
         query: str,
         response: str,
         intent: str,
+        context: UserContext,
         success: bool = True,
-    ) -> tuple[dict, TokenUsage]:
-        messages = [
-            Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
-            Message(role=Role.USER, content=EVALUATION_PROMPT.format(
-                query=query,
-                intent=intent,
-                response=response,
-                success=success,
-            )),
-        ]
+    ) -> tuple[dict, Reply]:
+        evaluation_prompt = EVALUATION_PROMPT.format(
+            query=query,
+            intent=intent,
+            response=response,
+            success=success,
+        )
 
-        llm_response = self._model.chat(messages)
-        logger.debug(f"Reflector raw response: {llm_response.text}")
-        info = self._parse_reflection(llm_response.text, success)
+        reply = await self.act(query=evaluation_prompt, context=context)
+        logger.debug(f"Reflector raw response: {reply.text}")
+        info = self._parse_reflection(reply.text, success)
 
         logger.info(
             f"Reflection on {intent}: "
@@ -101,7 +113,7 @@ class Reflector:
             f"feedback={info['feedback']!r}"
         )
 
-        return info, llm_response.tokens
+        return info, reply
 
     @property
     def max_reflections(self) -> int:
