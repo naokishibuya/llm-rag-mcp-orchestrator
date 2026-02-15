@@ -1,14 +1,16 @@
 # LLM RAG MCP Orchestrator Chat Demo
 
-A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflection. Supports Ollama (local) and Gemini (cloud) simultaneously.
+A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflection. Supports multiple LLM providers: Ollama (local), Gemini, Claude, and ChatGPT.
 
 ## Key Features
 
 - **Multi-agent Orchestrator**: LangGraph-based workflow with specialized agents
+- **Core Protocols**: `Chat`, `Agent`, `Embeddings` — protocol-based abstractions for providers and agents
+- **Multi-provider LLM**: Ollama, Gemini, Anthropic (Claude), OpenAI (ChatGPT) with unified interface
 - **Moderator**: Safety filter with pattern matching
 - **Router**: Intent classification and routing to specialized agents
 - **Tooluse**: Native LLM tool calling
-- **MCP**: finance, weather, web search as discoverable services
+- **MCP**: Finance, weather, web search as discoverable services
 - **RAG**: Local vector search with embeddings (cosine similarity)
 - **Reflector**: Self-reflection with retry mechanism
 - **Config**: YAML-based model and service registry
@@ -30,8 +32,8 @@ User ─► React UI ─► FastAPI (SSE) ─► Orchestrator (LangGraph)
                               RAG        MCP       Talker
                              Agent      Agents     Agent
                                │          │          │
-                           embedding     MCP       Ollama,
-                            vectors    services    Gemini
+                           embedding     MCP      Ollama, Gemini,
+                            vectors    services   Claude, ChatGPT
                          (Local data)  (FastMCP)  (Tool use)
                                           │
                                Finance, Weather, Tavily
@@ -63,7 +65,7 @@ The Talker agent supports LLM tool calling — tools are passed directly to the 
 
 ### Model Notes
 
-- **Gemini** follows tool-calling and formatting instructions more reliably but is subject to API rate limits on the free tier.
+- **Gemini / Claude / ChatGPT** follow tool-calling and formatting instructions more reliably but are subject to API rate limits.
 - **Ollama** (local) models like qwen2.5:7b may ignore formatting instructions (e.g. LaTeX delimiters) or produce less accurate routing. Larger local models generally perform better.
 
 ## Quick Start
@@ -94,7 +96,7 @@ Otherwise, the backend will auto-download ollama models on first use (which may 
 cd backend
 uv sync
 
-# Optional: add API keys for Gemini / Tavily
+# Optional: add API keys for Gemini / Claude / OpenAI / Tavily
 cp .env.example .env
 
 cd src
@@ -130,28 +132,38 @@ Open http://localhost:5173
 
 ## Configuration
 
-All model and service config lives in `backend/config/config.yaml`. Each entry under `talk` becomes a selectable model in the UI dropdown:
+All model and service config lives in `backend/config/config.yaml`. Each agent section has an `llm:` key. Entries under `talk.llm` become selectable models in the UI dropdown:
 
 ```yaml
 talk:
-  - class: backend.llm.ollama.OllamaChat
+  llm:
+    - class: backend.llm.ollama.OllamaChat
+      model: qwen2.5:7b
+      params:
+        temperature: 0.5
+
+    - class: backend.llm.gemini.GeminiChat
+      model: gemini-2.5-flash
+      api_key_env: GEMINI_API_KEY
+      params:
+        temperature: 0.5
+
+    - class: backend.llm.anthropic.AnthropicChat
+      model: claude-haiku-4-5-20251001
+      api_key_env: ANTHROPIC_API_KEY
+      params:
+        temperature: 0.5
+
+    - class: backend.llm.openai.OpenAIChat
+      model: gpt-4.1-nano
+      api_key_env: OPENAI_API_KEY
+      params:
+        temperature: 0.5
+
+mcp:
+  llm:
+    class: backend.llm.ollama.OllamaChat
     model: qwen2.5:7b
-    temperature: 0.5
-
-  - class: backend.llm.gemini.GeminiChat
-    model: gemini-2.5-flash
-    temperature: 0.5
-    api_key_env: GEMINI_API_KEY
-
-  - class: backend.llm.anthropic.AnthropicChat
-    model: claude-haiku-4-5-20251001
-    temperature: 0.5
-    api_key_env: ANTHROPIC_API_KEY
-
-  - class: backend.llm.openai.OpenAIChat
-    model: gpt-4.1-nano
-    temperature: 0.5
-    api_key_env: OPENAI_API_KEY
 ...
 ```
 
@@ -169,7 +181,11 @@ backend/
   config/config.yaml         # Models, pricing, MCP endpoints
   src/main.py                # FastAPI entrypoint
   src/backend/
-    api.py                   # REST endpoints
+    core/                    # Core protocols and types
+      chat.py                #   Chat protocol (ask/query), Message, Role
+      agent.py               #   Agent protocol, UserContext
+      reply.py               #   Reply, Tokens
+      embed.py               #   Embeddings protocol
     orchestrator/            # LangGraph state machine
       orchestrator.py        #   Lifecycle (startup/shutdown/stream)
       nodes.py               #   Graph state, node functions, graph builder
@@ -180,7 +196,8 @@ backend/
     rag/                     # RAG agent (numpy vector search)
     mcp/                     # MCP agent (tool calling)
     talk/                    # General conversation agent
-    llm/                     # Provider abstraction (Ollama, Gemini, Anthropic, OpenAI)
+    llm/                     # Provider implementations (Ollama, Gemini, Anthropic, OpenAI)
+    api.py                   # REST endpoints
 frontend/                    # React + TypeScript + Tailwind
 services/                    # MCP servers (finance, weather)
 data/                        # Documents for RAG indexing
