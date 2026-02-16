@@ -6,6 +6,18 @@ from .types import Chat, Message, Reply, Role, UserContext
 logger = logging.getLogger(__name__)
 
 
+_COMMON_RULES = """
+TOOL USAGE:
+- Only call a tool when the user's question DIRECTLY asks for it.
+- Do NOT call tools speculatively or for background context.
+
+MATH & CURRENCY RULES:
+- Use $...$ ONLY for LaTeX math (equations, variables, formulas).
+- Use $$...$$ ONLY for block math.
+- NEVER use \\( \\) or \\[ \\].
+""".strip()
+
+
 class Agent:
     def __init__(self, name: str, system_prompt: str):
         self.name = name
@@ -17,10 +29,10 @@ class Agent:
         model: Chat,
         query: str,
         history: list[Message],
-        context: UserContext | None = None,
         tools: dict[str, callable] | None = None,
+        context: UserContext | None = None,
     ) -> Reply:
-        system = self.system_prompt
+        system = f"{self.system_prompt}\n\n{_COMMON_RULES}"
         if context:
             system += f"\n\n{context}"
 

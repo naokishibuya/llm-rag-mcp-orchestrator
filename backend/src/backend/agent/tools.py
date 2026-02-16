@@ -1,10 +1,36 @@
+import inspect
 import json
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from .llm.tool import tool
+from .mcp.handler import MCPHandler, MCPService
+from .rag.client import RAGClient
 from .types import UserContext
+
+
+def tool(fn):
+    """Decorator that attaches a `.tool_schema` dict derived from the function signature."""
+    sig = inspect.signature(fn)
+    properties = {}
+    required = []
+    for name, param in sig.parameters.items():
+        prop: dict = {"type": "string"}
+        if param.annotation is float:
+            prop["type"] = "number"
+        elif param.annotation is int:
+            prop["type"] = "integer"
+        elif param.annotation is bool:
+            prop["type"] = "boolean"
+        properties[name] = prop
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+    fn.tool_schema = {
+        "name": fn.__name__,
+        "description": inspect.getdoc(fn) or "",
+        "input_schema": {"type": "object", "properties": properties, "required": required},
+    }
+    return fn
 
 
 @tool
@@ -40,9 +66,10 @@ def get_current_time(tz: str = "UTC") -> str:
 def _make_context_tool(context: UserContext):
     @tool
     def get_user_context() -> str:
-        """Get information about the user's location and local time.
-
-        Returns the user's city, timezone, and local time if available.
+        """Get user's information about:
+         - city
+         - timezone
+         - local_time
         Use this to personalize responses or determine the user's timezone.
         """
         return str(context)
@@ -50,10 +77,11 @@ def _make_context_tool(context: UserContext):
     return get_user_context
 
 
-def _make_rag_tool(rag_client, top_k: int):
+def _make_rag_tool(rag_client: RAGClient):
     topic_names = rag_client.topic_names()
     topic_descs = rag_client.topic_descriptions()
     topic_list = "\n".join(f"  - {t}" for t in topic_descs) if topic_descs else "  (general)"
+    top_k = rag_client.top_k
 
     @tool
     def search_knowledge_base(query: str, topic: str = "") -> str:
@@ -82,7 +110,7 @@ def _make_rag_tool(rag_client, top_k: int):
     return search_knowledge_base
 
 
-def _make_mcp_tool(handler, service):
+def _make_mcp_tool(handler: MCPHandler, service: MCPService):
     format_hint = service.format_hint
 
     async def mcp_tool(**params) -> str:
@@ -106,14 +134,22 @@ def _make_mcp_tool(handler, service):
     return mcp_tool
 
 
-def build_tools(*, context=None, rag_client=None, rag_top_k=3, mcp_handlers=None):
+def build_tools(*, context: UserContext, rag_client: RAGClient, mcp_handlers: dict[str, MCPHandler]=None):
     """Build the complete tools dict for a single request."""
-    tools = {"calculate": calculate, "get_current_time": get_current_time}
-    if context:
-        tools["get_user_context"] = _make_context_tool(context)
-    if rag_client:
-        tools["search_knowledge_base"] = _make_rag_tool(rag_client, rag_top_k)
+    tools = {
+        "calculate": calculate,
+        "get_current_time": get_current_time,
+        "get_user_context": _make_context_tool(context),
+        "search_knowledge_base": _make_rag_tool(rag_client),
+    }
     if mcp_handlers:
         for handler, service in mcp_handlers.values():
             tools[service.name] = _make_mcp_tool(handler, service)
     return tools
+
+
+def filter_tools(all_tools: dict, tool_names: list[str] | str) -> dict:
+    """Filter tools dict to only include the named tools."""
+    if tool_names == "all" or (isinstance(tool_names, list) and "all" in tool_names):
+        return all_tools
+    return {name: fn for name, fn in all_tools.items() if name in tool_names}

@@ -23,13 +23,18 @@ class SearchResult:
 
 
 class RAGClient:
-    def __init__(self, embedder: Embeddings, topics: list[dict] | None = None):
+    def __init__(self, embedder: Embeddings, topics: list[dict], top_k: int):
         self._embedder = embedder
         self._topics = topics or []
         self._documents: list[Document] = []
         self._embeddings: np.ndarray | None = None
+        self._top_k = top_k
 
-    def search(self, query: str, top_k: int = 3, topic: str = "") -> list[SearchResult]:
+    @property
+    def top_k(self) -> int:
+        return self._top_k
+
+    def search(self, query: str, topic: str = "") -> list[SearchResult]:
         self._ensure_indexed()
 
         if not self._documents or self._embeddings is None:
@@ -47,7 +52,7 @@ class RAGClient:
             mask = np.array([d.topic.lower() == topic_lower for d in self._documents])
             scores = np.where(mask, scores, -1.0)
 
-        indices = np.argsort(scores)[::-1][:top_k]
+        indices = np.argsort(scores)[::-1][:self._top_k]
         return [SearchResult(self._documents[i], float(scores[i])) for i in indices]
 
     def topic_names(self) -> list[str]:

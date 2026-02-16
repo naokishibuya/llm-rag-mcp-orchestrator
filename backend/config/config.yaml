@@ -19,23 +19,37 @@ llm:
     params:
       temperature: 0.5
 
+workflow:
+  max_forwards: 2
+
 agents:
-  chat:
+  assistant:
+    role: "General chat, greetings, simple questions, time, math"
     system_prompt: |
       You are a helpful, friendly assistant.
       Be concise but informative. If you don't know something, say so rather than making things up.
-
-      TOOL USAGE:
-      - Only call a tool when the user's question DIRECTLY asks for it.
-      - Do NOT call tools speculatively or for background context.
-      - Examples: "AAPL price" → get_stock_price, "weather in Tokyo" → get_weather,
-        "what time is it" → get_current_time. "Where is Mt. Fuji?" → no weather tool needed.
-
-      MATH & CURRENCY RULES:
-      - Use $...$ ONLY for LaTeX math (equations, variables, formulas).
-      - Use $$...$$ ONLY for block math.
-      - NEVER use \( \) or \[ \].
-    tools: all
+    tools: [get_current_time, get_user_context, calculate]
+  researcher:
+    role: "Knowledge questions about space, history, geography, and current events"
+    system_prompt: |
+      You are a research specialist.
+      Cite sources when available. Be thorough but concise.
+      If the knowledge base has no results, use web search as a fallback.
+    tools: [search_knowledge_base, tavily_search]
+  analyst:
+    role: "Finance, stocks, market data, numerical analysis"
+    system_prompt: |
+      You are a financial analyst.
+      Present data clearly in tables when appropriate.
+      Be precise with numbers and cite data sources.
+    tools: [get_stock_price, calculate]
+  weather_expert:
+    role: "Weather queries, forecasts, conditions"
+    system_prompt: |
+      You are a weather specialist.
+      Provide clear, concise weather information.
+      Include relevant details like temperature, conditions, and forecasts.
+    tools: [get_weather, get_user_context]
 
 mcp:
   services:
@@ -54,17 +68,18 @@ rag:
   embeddings:
     class: backend.agent.llm.ollama.OllamaEmbeddings
     model: nomic-embed-text
-  top_k: 3
-  topics:
-    - name: Space
-      description: "Solar system, planets, space exploration, astronauts, missions"
-      directory: space
-    - name: History
-      description: "Ancient civilizations, world wars, modern history, key events"
-      directory: history
-    - name: Geography
-      description: "Natural wonders, countries, landmarks, mountains, rivers"
-      directory: geography
+  params:
+    top_k: 2
+    topics:
+      - name: Space
+        description: "Solar system, planets, space exploration, astronauts, missions"
+        directory: space
+      - name: History
+        description: "Ancient civilizations, world wars, modern history, key events"
+        directory: history
+      - name: Geography
+        description: "Natural wonders, countries, landmarks, mountains, rivers"
+        directory: geography
 
 pricing:
   qwen2.5:7b:

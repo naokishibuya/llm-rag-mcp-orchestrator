@@ -4,10 +4,12 @@ from ..agent import Agent, Reply, UserContext
 from ..agent.llm import Registry
 from ..agent.mcp import MCPClient, MCPHandler
 from ..agent.rag import RAGClient
-from ..agent.tools import build_tools
+from ..agent.tools import build_tools, filter_tools
 from ..agent.types import Message
 from ..config import Config
+from .evaluator import evaluate
 from .moderator import Moderator
+from .router import route
 
 
 logger = logging.getLogger(__name__)
@@ -20,21 +22,21 @@ class Orchestrator:
         self._mcp_client: MCPClient | None = None
         self._mcp_handlers: dict[str, tuple[MCPHandler, object]] = {}
         self._rag_client: RAGClient | None = None
-        self._agent: Agent | None = None
+        self._agents: dict[str, Agent] = {}
         self._moderator = Moderator()
 
     async def startup(self):
-        # Build agent from config
-        agent_cfg = self._config.agents.get("chat", {})
-        self._agent = Agent(
-            "chat",
-            agent_cfg.get("system_prompt", "You are a helpful assistant."),
-        )
+        # Build agents from config
+        for name, cfg in self._config.agents.items():
+            self._agents[name] = Agent(
+                name,
+                cfg.get("system_prompt", "You are a helpful assistant."),
+            )
 
         # Setup RAG
         self._rag_client = RAGClient(
             self._registry.resolve_embeddings(),
-            topics=self._config.rag_topics,
+            **self._config.rag_params,
         )
 
         # Setup MCP
@@ -47,8 +49,8 @@ class Orchestrator:
                 self._mcp_handlers[service.name] = (handler, service)
 
         logger.info(
-            "Orchestrator started: agent=%s, mcp_tools=%d",
-            self._agent.name, len(self._mcp_handlers),
+            "Orchestrator started: agents=%s, mcp_tools=%d",
+            list(self._agents.keys()), len(self._mcp_handlers),
         )
 
     async def shutdown(self):
@@ -66,7 +68,7 @@ class Orchestrator:
         **_,
     ):
         """Async generator yielding (event_name, data) tuples."""
-        if not self._agent:
+        if not self._agents:
             raise RuntimeError("Orchestrator not started. Call startup() first.")
 
         # Refresh MCP connections for servers that weren't available at startup
@@ -78,24 +80,75 @@ class Orchestrator:
 
         if moderation.is_blocked:
             reply = Reply(text="I'm sorry, but I can't assist with that request.", success=False)
-            yield "agent", {"reply": reply}
+            yield "agent", {"reply": reply, "agent_name": "moderation"}
             yield "done", {"moderation": moderation}
             return
 
-        # Build tools for this request
-        tools = build_tools(
+        # Build all tools once
+        all_tools = build_tools(
             context=context,
             rag_client=self._rag_client,
-            rag_top_k=self._config.rag_top_k,
-            mcp_handlers=self._mcp_handlers,
-        )
+            mcp_handlers=self._mcp_handlers)
 
-        # Run agent
         model = self._registry.get_talk_model(model_name)
-        reply = await self._agent.act(
-            model=model, query=query, history=history, context=context, tools=tools,
-        )
-        yield "agent", {"reply": reply}
+        agents_cfg = self._config.agents
+        max_forwards = self._config.workflow.get("max_forwards", 2)
+
+        # Route
+        agent_name, reasoning, needs_context, router_reply = await route(model, query, agents_cfg)
+        yield "thinking", {
+            "step": f"Router \u2192 {agent_name}",
+            "detail": reasoning,
+            "tokens": router_reply.tokens,
+            "model": router_reply.model,
+        }
+
+        # Agent loop
+        agent_context = context if needs_context else None
+        reply = None
+        for attempt in range(max_forwards + 1):
+            # Run agent with filtered tools
+            tool_names = agents_cfg[agent_name].get("tools", "all")
+            agent_tools = filter_tools(all_tools, tool_names)
+            reply = await self._agents[agent_name].act(
+                model=model, query=query, history=history,
+                tools=agent_tools, context=agent_context,
+            )
+
+            # Yield thinking for each tool used
+            for tool_name in reply.tools_used:
+                yield "thinking", {"step": f"Tool[{agent_name}]: {tool_name}"}
+
+            # Yield agent reply as thinking (visible in UI before evaluation)
+            yield "thinking", {
+                "step": f"Agent[{agent_name}]",
+                "detail": reply.text,
+                "tokens": reply.tokens,
+                "model": reply.model,
+            }
+
+            # Last attempt — skip evaluation
+            if attempt >= max_forwards:
+                break
+
+            # Evaluate
+            sufficient, eval_reasoning, next_agent, eval_reply = await evaluate(
+                model, query, reply.text, agents_cfg, agent_name,
+            )
+            status = "\u2713 sufficient" if sufficient else f"\u2717 forwarding \u2192 {next_agent}"
+            yield "thinking", {
+                "step": f"Evaluator: {status}",
+                "detail": eval_reasoning,
+                "tokens": eval_reply.tokens,
+                "model": eval_reply.model,
+            }
+
+            if sufficient:
+                break
+            agent_name = next_agent
+
+        # Final answer
+        yield "agent", {"reply": reply, "agent_name": agent_name}
         yield "done", {"moderation": moderation}
 
     async def _refresh_mcp(self):

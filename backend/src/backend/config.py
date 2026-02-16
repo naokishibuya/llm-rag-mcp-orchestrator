@@ -10,11 +10,11 @@ class Config:
 
         self._llm = _dict_to_list(data["llm"])
         self._embedding = data["rag"]["embeddings"]
-        self._rag_top_k: int = data["rag"].get("top_k", 3)
-        self._rag_topics: list[dict] = data["rag"].get("topics", [])
+        self._rag_params = data["rag"].get("params", {})
         self._pricing = data.get("pricing", {})
         self._mcp_services = data.get("mcp", {}).get("services", {})
         self._agents = data.get("agents", {})
+        self._workflow = data.get("workflow", {})
 
     @property
     def llm(self) -> list[dict]:
@@ -34,12 +34,8 @@ class Config:
         return models[0]
 
     @property
-    def rag_top_k(self) -> int:
-        return self._rag_top_k
-
-    @property
-    def rag_topics(self) -> list[dict]:
-        return self._rag_topics
+    def rag_params(self) -> dict:
+        return self._rag_params
 
     @property
     def pricing(self) -> dict:
@@ -52,6 +48,10 @@ class Config:
     @property
     def agents(self) -> dict:
         return self._agents
+
+    @property
+    def workflow(self) -> dict:
+        return self._workflow
 
 
 def _dict_to_list(cfg) -> list[dict]:

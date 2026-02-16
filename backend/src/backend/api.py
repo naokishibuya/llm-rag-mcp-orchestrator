@@ -67,12 +67,20 @@ async def chat(request: ChatRequest):
                 if event_name == "moderation":
                     yield _event("thinking", step=f"Moderation: {data['moderation'].verdict}")
 
+                elif event_name == "thinking":
+                    step = data.get("step", "")
+                    detail = data.get("detail", "")
+                    tokens = data.get("tokens")
+                    model = data.get("model")
+                    if tokens and model:
+                        pricer.add(model, tokens)
+                    yield _event("thinking", step=step, detail=detail)
+
                 elif event_name == "agent":
                     reply = data["reply"]
-                    for tool_name in reply.tools_used:
-                        yield _event("thinking", step=f"Tool: {tool_name}")
+                    agent_name = data.get("agent_name", "chat")
                     tokens = pricer.add(reply.model, reply.tokens)
-                    yield _event("answer", result={"intent": "chat", **asdict(reply)})
+                    yield _event("answer", result={"intent": agent_name, **asdict(reply)})
 
                 elif event_name == "done":
                     yield _event("done", moderation=asdict(data["moderation"]), **pricer.summary())
