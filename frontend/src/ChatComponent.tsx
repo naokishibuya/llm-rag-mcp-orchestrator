@@ -203,10 +203,10 @@ export default function ChatComponent({ model }: ChatProps) {
     return { city, timezone: tz };
   });
 
-  const lastMsgRef = useRef<HTMLDivElement | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (lastMsgRef.current) {
-      lastMsgRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
 
@@ -382,7 +382,7 @@ export default function ChatComponent({ model }: ChatProps) {
           </button>
         )}
       </div>
-      <div className="flex-grow overflow-y-auto min-h-0 p-4 bg-gray-50 rounded-lg border mb-4">
+      <div ref={chatContainerRef} className="flex-grow overflow-y-auto min-h-0 p-4 bg-gray-50 rounded-lg border mb-4">
         {messages.length === 0 && (
           <div className="text-gray-400 text-center">
             <p>Start the conversation!</p>
@@ -392,7 +392,7 @@ export default function ChatComponent({ model }: ChatProps) {
         {messages.map((msg, idx) => (
           <div
             key={idx}
-            ref={idx === messages.length - 1 ? lastMsgRef : undefined}
+
             className={`flex mb-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
