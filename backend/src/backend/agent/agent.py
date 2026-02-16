@@ -11,12 +11,14 @@ _COMMON_RULES = R"""
 TOOL USAGE:
 - Only call a tool when the user's question DIRECTLY asks for it.
 - Do NOT call tools speculatively or for background context.
+
+MATH FORMATTING:
+- Use \( ... \) for inline math and \[ ... \] for display math.
+- NEVER use $...$ or $$...$$ as math delimiters.
 """.strip()
 
-
-# Forbidden delimiters
-_FORBIDDEN_INLINE_RE = re.compile(r"\\\(\s*(.*?)\s*\\\)", re.DOTALL)
-_FORBIDDEN_BLOCK_RE = re.compile(r"\\\[\s*(.*?)\s*\\\]", re.DOTALL)
+_BLOCK_RE = re.compile(r"\\\[([\s\S]*?)\\\]")
+_INLINE_RE = re.compile(r"\\\(([\s\S]*?)\\\)")
 
 
 class Agent:
@@ -42,27 +44,38 @@ class Agent:
 
         logger.info("Agent[%s] query=%r", self.name, query)
         reply = await model.ask(messages, tools=tools)
-
-        # Hard guardrail: enforce supported math delimiters regardless of model behavior.
-        reply.text = _normalize_math_delimiters(reply.text)
+        reply.text = _normalize_math(reply.text)
 
         logger.info("Agent[%s] %s", self.name, reply)
         return reply
 
 
-def _normalize_math_delimiters(text: str) -> str:
-    """Deterministically rewrite forbidden math delimiters to supported ones."""
-    def to_block(match: re.Match[str]) -> str:
-        body = match.group(1).strip()
-        if "\n" in body:
-            return f"$$\n{body}\n$$"
-        return f"$${body}$$"
+def _normalize_math(text: str) -> str:
+    """Convert LaTeX delimiters to $/$$ and escape bare $ signs."""
+    # 1. Extract math blocks into placeholders
+    inlines: list[str] = []
+    blocks: list[str] = []
 
-    def to_inline(match: re.Match[str]) -> str:
-        body = match.group(1).strip()
-        return f"${body}$"
+    def _save_block(m: re.Match[str]) -> str:
+        blocks.append(m.group(1).strip())
+        return f"%%BLOCK{len(blocks) - 1}%%"
 
-    # Replace block first, then inline
-    out = _FORBIDDEN_BLOCK_RE.sub(to_block, text)
-    out = _FORBIDDEN_INLINE_RE.sub(to_inline, out)
-    return out
+    def _save_inline(m: re.Match[str]) -> str:
+        inlines.append(m.group(1).strip())
+        return f"%%INLINE{len(inlines) - 1}%%"
+
+    text = _BLOCK_RE.sub(_save_block, text)
+    text = _INLINE_RE.sub(_save_inline, text)
+
+    # 2. Escape bare $ so currency signs are never treated as math
+    text = re.sub(r"(?<!\\)\$", r"\$", text)
+
+    # 3. Restore math with $/$$ delimiters
+    def _restore_block(m: re.Match[str]) -> str:
+        body = blocks[int(m.group(1))]
+        return f"$$\n{body}\n$$" if "\n" in body else f"$${body}$$"
+
+    text = re.sub(r"%%BLOCK(\d+)%%", _restore_block, text)
+    text = re.sub(r"%%INLINE(\d+)%%", lambda m: f"${inlines[int(m.group(1))]}$", text)
+
+    return text
