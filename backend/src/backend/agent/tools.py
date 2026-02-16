@@ -112,8 +112,20 @@ def _make_rag_tool(rag_client: RAGClient):
 def _make_mcp_tool(handler: MCPHandler, service: MCPService):
     format_hint = service.format_hint
 
+    # Properties with "const" are fixed values, not real parameters. LLMs see them
+    # as fillable fields and hallucinate invalid values. Strip them from the schema
+    # and inject them automatically on every call.
+    schema = service.input_schema.copy()
+    props = dict(schema.get("properties", {}))
+    const_values = {}
+    for name, prop in list(props.items()):
+        if "const" in prop:
+            const_values[name] = prop["const"]
+            del props[name]
+    schema["properties"] = props
+
     async def mcp_tool(**params) -> str:
-        data = await handler.handle(**params)
+        data = await handler.handle(**const_values, **params)
         if isinstance(data, dict) and data.get("unavailable"):
             return f"Service '{service.name}' is currently unavailable."
         if isinstance(data, dict) and "error" in data:
@@ -128,7 +140,7 @@ def _make_mcp_tool(handler: MCPHandler, service: MCPService):
     mcp_tool.tool_schema = {
         "name": service.name,
         "description": service.description,
-        "input_schema": service.input_schema,
+        "input_schema": schema,
     }
     return mcp_tool
 
