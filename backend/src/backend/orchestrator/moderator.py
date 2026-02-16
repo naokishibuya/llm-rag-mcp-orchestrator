@@ -19,13 +19,13 @@ class Moderation:
         return self.verdict == Verdict.BLOCK
 
 
-BLOCK_PATTERNS = [
+_BLOCK_PATTERNS = [
     (r"\b(?:build|make|create)\b.*\b(?:bomb|explosive|weapon)\b", "weapons"),
     (r"\b(?:kill|murder|suicide)\b", "violence"),
     (r"\b(system|root|admin)?\s*password\b", "credentials"),
 ]
 
-WARN_PATTERNS = [
+_WARN_PATTERNS = [
     (r"\b(?:hack|exploit)\b", "security"),
 ]
 
@@ -37,11 +37,11 @@ class Moderator:
 
         text_lower = text.strip().lower()
 
-        for pattern, reason in BLOCK_PATTERNS:
+        for pattern, reason in _BLOCK_PATTERNS:
             if re.search(pattern, text_lower):
                 return Moderation(Verdict.BLOCK, reason)
 
-        for pattern, reason in WARN_PATTERNS:
+        for pattern, reason in _WARN_PATTERNS:
             if re.search(pattern, text_lower):
                 return Moderation(Verdict.WARN, reason)
 

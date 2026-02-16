@@ -1,12 +1,12 @@
 import importlib
 
-from ..config import Config
-from ..core import Chat, Embeddings
+from ..types import Chat, Embeddings
 
 
 class Registry:
-    def __init__(self, config: Config):
-        self._config = config
+    def __init__(self, llm_configs: list[dict], embedding_config: dict):
+        self._llm_configs = llm_configs
+        self._embedding_config = embedding_config
         self._chat_model_cache: dict[str, Chat] = {}
         self._embeddings_cache: dict[str, Embeddings] = {}
 
@@ -14,34 +14,28 @@ class Registry:
         if model in self._chat_model_cache:
             return self._chat_model_cache[model]
 
-        cfg = self._config.find_talk_model(model)
+        cfg = self._find_llm_config(model)
         if not cfg:
-            raise ValueError(f"Unknown talk model: {model}")
+            raise ValueError(f"Unknown model: {model}")
 
         llm = _load_class(cfg)
         self._chat_model_cache[model] = llm
         return llm
 
-    def resolve_model(self, key: str) -> Chat:
-        """Resolve a pipeline model by role key (e.g. 'mcp', 'rag', 'orchestrator')."""
-        if key in self._chat_model_cache:
-            return self._chat_model_cache[key]
-
-        cfg = self._config.get_pipeline_model(key)
-        llm = _load_class(cfg)
-        self._chat_model_cache[key] = llm
-        return llm
-
     def resolve_embeddings(self) -> Embeddings:
-        """Resolve the fixed embedding model from config."""
         key = "_embedding"
         if key in self._embeddings_cache:
             return self._embeddings_cache[key]
 
-        cfg = self._config.get_embedding_config()
-        embeddings = _load_class(cfg)
+        embeddings = _load_class(self._embedding_config)
         self._embeddings_cache[key] = embeddings
         return embeddings
+
+    def _find_llm_config(self, model: str) -> dict | None:
+        for cfg in self._llm_configs:
+            if cfg.get("model") == model:
+                return cfg
+        return None
 
 
 _CONFIG_ONLY_KEYS = {"class"}

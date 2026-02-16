@@ -12,17 +12,10 @@ type TokenUsage = {
   output_tokens: number;
 };
 
-type ReflectionInfo = {
-  action: string;
-  score: number | null;
-  feedback: string;
-};
-
 type AgentResult = {
   intent: string;
   model: string;
   text: string;
-  reflection: ReflectionInfo | null;
   tools_used: string[];
 };
 
@@ -202,7 +195,8 @@ export default function ChatComponent({ model }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [useReflection, setUseReflection] = useState(true);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
   const [userContext] = useState<UserContext>(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const city = tz.split('/').pop()!.replace(/_/g, ' ');
@@ -216,14 +210,7 @@ export default function ChatComponent({ model }: ChatProps) {
     }
   }, [messages]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || !model) return;
-
-    const userMessage: Message = { role: 'user', content: input };
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setInput('');
+  const sendMessages = async (updatedMessages: Message[]) => {
     setLoading(true);
 
     const payloadMessages = updatedMessages.map(({ role, content }) => ({ role, content }));
@@ -245,7 +232,6 @@ export default function ChatComponent({ model }: ChatProps) {
         body: JSON.stringify({
           messages: payloadMessages,
           model,
-          use_reflection: useReflection,
           user_context: {
             ...userContext,
             local_time: new Intl.DateTimeFormat('en-US', {
@@ -350,27 +336,43 @@ export default function ChatComponent({ model }: ChatProps) {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || !model) return;
+
+    const userMessage: Message = { role: 'user', content: input };
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    setInput('');
+
+    await sendMessages(updatedMessages);
+  };
+
+  const startEditing = (idx: number) => {
+    setEditingIdx(idx);
+    setEditValue(messages[idx].content);
+  };
+
+  const submitEdit = async (idx: number) => {
+    const edited = editValue.trim();
+    if (!edited || loading) return;
+    setEditingIdx(null);
+
+    const userMessage: Message = { role: 'user', content: edited };
+    const updatedMessages = [...messages.slice(0, idx), userMessage];
+    setMessages(updatedMessages);
+
+    await sendMessages(updatedMessages);
+  };
+
   const clearChat = () => setMessages([]);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-4xl flex flex-col flex-1 min-h-0 max-h-[calc(100vh-10rem)]">
+    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-4xl flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex justify-between items-center mb-2">
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500">
-            {messages.length > 0 ? `${messages.length} messages` : ''}
-          </span>
-          <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useReflection}
-              onChange={(e) => setUseReflection(e.target.checked)}
-              className="w-3 h-3"
-            />
-            <span title="Enable self-reflection (agent critiques and may revise its answer)">
-              Reflect
-            </span>
-          </label>
-        </div>
+        <span className="text-sm text-gray-500">
+          {messages.length > 0 ? `${messages.length} messages` : ''}
+        </span>
         {messages.length > 0 && (
           <button
             onClick={clearChat}
@@ -405,8 +407,52 @@ export default function ChatComponent({ model }: ChatProps) {
                   thinking={msg.thinking}
                   isStreaming={msg.isStreaming}
                 />
+              ) : editingIdx === idx ? (
+                <div className="flex flex-col gap-2 min-w-[200px]">
+                  <textarea
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-full p-2 rounded border border-blue-300 text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
+                    rows={3}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitEdit(idx);
+                      } else if (e.key === 'Escape') {
+                        setEditingIdx(null);
+                      }
+                    }}
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => setEditingIdx(null)}
+                      className="text-xs text-blue-200 hover:text-white px-2 py-1"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => submitEdit(idx)}
+                      disabled={!editValue.trim() || loading}
+                      className="text-xs bg-white text-blue-500 px-3 py-1 rounded hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
               ) : (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                <div className="group relative">
+                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  {!loading && (
+                    <button
+                      onClick={() => startEditing(idx)}
+                      className="hidden group-hover:flex absolute -bottom-1 -left-1 items-center justify-center w-6 h-6 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs shadow"
+                      title="Edit message"
+                    >
+                      ✎
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>

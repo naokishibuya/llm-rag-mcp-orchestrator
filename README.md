@@ -1,20 +1,23 @@
-# LLM RAG MCP Orchestrator Chat Demo
+# LLM Multi-Agent Chat Demo
 
-A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflection. Supports multiple LLM providers: Ollama (local), Gemini, Claude, and ChatGPT.
+A multi-agent chat system with configurable agents, tool calling (MCP), RAG, and real-time streaming. Supports multiple LLM providers: Ollama (local), Gemini, Claude, and ChatGPT.
 
 ## Key Features
 
-- **Multi-agent Orchestrator**: LangGraph-based workflow with specialized agents
-- **Core Protocols**: `Chat`, `Agent`, `Embeddings` — protocol-based abstractions for providers and agents
-- **Multi-provider LLM**: Ollama, Gemini, Anthropic (Claude), OpenAI (ChatGPT) with unified interface
-- **Moderator**: Safety filter with pattern matching
-- **Router**: Intent classification and routing to specialized agents
-- **Tooluse**: Native LLM tool calling
-- **MCP**: Finance, weather, web search as discoverable services
-- **RAG**: Local vector search with embeddings (cosine similarity)
-- **Reflector**: Self-reflection with retry mechanism
-- **Config**: YAML-based model and service registry
-- **UI**: Real-time thinking with streaming responses (SSE)
+- **Agents**
+  - YAML-driven — define roles, system prompts, and allowed tools in config
+  - Multi-provider LLM — Ollama (local), Gemini, Claude, ChatGPT with unified `Chat` protocol
+  - Tool calling — agents access all capabilities as tools (calculator, time, user context, RAG, MCP)
+  - MCP — finance, weather, web search exposed as tools via FastMCP
+  - RAG — topic-aware local vector search with embeddings, exposed as a tool
+- **Orchestration**
+  - Router — LLM-based intent classification, picks the best agent
+  - Evaluator — judges response quality, forwards to another agent if needed
+  - Moderator — safety filter with pattern matching
+- **UI**
+  - Real-time thinking steps with streaming responses (SSE)
+  - Multi-turn chat with full conversation history
+  - Edit-and-restart earlier messages
 
 <br>
 
@@ -24,40 +27,41 @@ A multi-agent chat system that combines RAG, tool calling (MCP), and self-reflec
 
 ## Architecture
 
-```
-User ─► React UI ─► FastAPI (SSE) ─► Orchestrator (LangGraph)
-            │                             │
-        TypeScript             ┌──────────┼──────────┐
-        Tailwind               ▼          ▼          ▼
-                              RAG        MCP       Talker
-                             Agent      Agents     Agent
-                               │          │          │
-                           embedding     MCP      Ollama, Gemini,
-                            vectors    services   Claude, ChatGPT
-                         (Local data)  (FastMCP)  (Tool use)
-                                          │
-                               Finance, Weather, Tavily
-```
+- **Frontend** — React + TypeScript + Tailwind, streams orchestration events via SSE
+- **Backend** — FastAPI, stateless (receives full message history each request)
+- **Orchestrator** — async generator that coordinates the pipeline:
+  1. **Moderator** — blocks unsafe queries (pattern matching)
+  2. **Router** — LLM call to classify intent and pick the best agent
+  3. **Agent** — LLM call with filtered tools (each agent only sees its allowed tools)
+  4. **Evaluator** — LLM call to judge response quality; forwards to another agent if insufficient (up to `max_forwards` attempts)
+- **Agents** — defined in YAML config with a role, system prompt, and tool list (assistant, researcher, analyst, weather_expert)
+- **Tools** — calculator, time, user context, RAG search, and MCP services (finance, weather, Tavily web search)
 
-**Orchestration flow:** Moderation → Routing → Agent execution → Reflection → Response
-
-The orchestrator classifies each query, routes it to the right agent, and optionally reflects on the response quality before returning it. Multi-intent queries (e.g. "AAPL price and Tokyo weather") are split and handled sequentially.
+<br>
 
 <p align="center">
-  <img src="images/orchestration.png" alt="Orchestration flow" width="500"/>
+  <img src="images/orchestration.png" alt="Orchestration flow" width="600"/>
 </p>
 
-### Thinking UI & Reflection
+### Thinking UI & Streaming
 
-The UI streams orchestration steps in real time via SSE — routing decisions, agent outputs, and reflection evaluations appear as they happen. The thinking section auto-collapses once the final answer arrives.
+The UI streams orchestration steps in real time via SSE — routing decisions, tool calls, agent outputs, and evaluation results appear as they happen. The thinking section auto-collapses once the final answer arrives.
 
 <p align="center">
   <img src="images/thinking-ui.png" alt="Thinking UI showing orchestration steps" width="700"/>
 </p>
 
-### Native Tool Calling
+### Multi-turn Chat & Edit
 
-The Talker agent supports LLM tool calling — tools are passed directly to the model and invoked automatically. Currently includes a sandboxed calculator; each tool call appears as a thinking step.
+The chat supports full multi-turn conversations. You can also edit any earlier user message — the conversation restarts from that point with the edited text.
+
+<p align="center">
+  <img src="images/edit-restart.png" alt="Edit and restart conversation" width="700"/>
+</p>
+
+### Tool Calling
+
+Agents use native LLM tool calling — tools are defined as plain functions and passed directly to the model. Each tool call appears as a thinking step.
 
 <p align="center">
   <img src="images/tooluse.png" alt="Tool calling with calculator" width="700"/>
@@ -84,7 +88,6 @@ git clone git@github.com:naokishibuya/llm-rag-chat-demo.git
 cd llm-rag-chat-demo
 
 ollama pull qwen2.5:7b
-ollama pull gemma2:9b
 ollama pull nomic-embed-text
 ```
 
@@ -132,73 +135,96 @@ Open http://localhost:5173
 
 ## Configuration
 
-All model and service config lives in `backend/config/config.yaml`. Each agent section has an `llm:` key. Entries under `talk.llm` become selectable models in the UI dropdown:
+All config lives in `backend/config/config.yaml`.
+
+### Agents
+
+Agents are defined declaratively — each has a role (used by the router), a system prompt, and a list of allowed tools:
 
 ```yaml
-talk:
-  llm:
-    - class: backend.llm.ollama.OllamaChat
-      model: qwen2.5:7b
-      params:
-        temperature: 0.5
+agents:
+  assistant:
+    role: "General chat, greetings, simple questions, time, math"
+    system_prompt: |
+      You are a helpful, friendly assistant.
+      Be concise but informative.
+    tools: [get_current_time, get_user_context, calculate]
 
-    - class: backend.llm.gemini.GeminiChat
-      model: gemini-2.5-flash
-      api_key_env: GEMINI_API_KEY
-      params:
-        temperature: 0.5
+  researcher:
+    role: "Knowledge questions about space, history, geography, and current events"
+    system_prompt: |
+      You are a research specialist.
+      Cite sources when available.
+    tools: [search_knowledge_base, tavily_search]
 
-    - class: backend.llm.anthropic.AnthropicChat
-      model: claude-haiku-4-5-20251001
-      api_key_env: ANTHROPIC_API_KEY
-      params:
-        temperature: 0.5
+  analyst:
+    role: "Finance, stocks, market data, numerical analysis"
+    tools: [get_stock_price, calculate]
 
-    - class: backend.llm.openai.OpenAIChat
-      model: gpt-4.1-nano
-      api_key_env: OPENAI_API_KEY
-      params:
-        temperature: 0.5
-
-mcp:
-  llm:
-    class: backend.llm.ollama.OllamaChat
-    model: qwen2.5:7b
-...
+  weather_expert:
+    role: "Weather queries, forecasts, conditions"
+    tools: [get_weather, get_user_context]
 ```
 
-Models requiring API keys are excluded from the UI selectors when credentials are missing.
+### LLMs
 
-Note on the `pricing` section:
-- It defines per-model token costs ($ per 1M tokens) used for usage tracking.
-- These values may differ from actual provider pricing. Adjust as needed.
-- Local models default to zero.
+Entries under `llm` become selectable models in the UI dropdown:
+
+```yaml
+llm:
+  - class: backend.agent.llm.ollama.OllamaChat
+    model: qwen2.5:7b
+  - class: backend.agent.llm.gemini.GeminiChat
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+  - class: backend.agent.llm.anthropic.AnthropicChat
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+  - class: backend.agent.llm.openai.OpenAIChat
+    model: gpt-4.1-nano
+    api_key_env: OPENAI_API_KEY
+```
+
+Models requiring API keys are excluded from the UI when credentials are missing.
+
+### Workflow
+
+```yaml
+workflow:
+  max_forwards: 2  # Max agent-to-agent forwards per query
+```
+
+### Pricing
+
+The `pricing` section defines per-model token costs ($ per 1M tokens) used for usage tracking in the UI. These may differ from actual provider pricing. Local models default to zero.
 
 ## Project Structure
 
 ```
 backend/
-  config/config.yaml         # Models, pricing, MCP endpoints
-  src/main.py                # FastAPI entrypoint
+  config/config.yaml           # Agents, LLMs, MCP endpoints, RAG, pricing
+  knowledge/                   # Documents for RAG indexing (by topic)
+    space/                     #   Solar system, space exploration
+    history/                   #   Ancient civilizations, modern history
+    geography/                 #   Countries, landmarks, natural wonders
+  src/main.py                  # FastAPI entrypoint
   src/backend/
-    core/                    # Core protocols and types
-      chat.py                #   Chat protocol (ask/query), Message, Role
-      agent.py               #   Agent protocol, UserContext
-      reply.py               #   Reply, Tokens
-      embed.py               #   Embeddings protocol
-    orchestrator/            # LangGraph state machine
-      orchestrator.py        #   Lifecycle (startup/shutdown/stream)
-      nodes.py               #   Graph state, node functions, graph builder
-      router.py              #   Intent classification
-      reflector.py           #   Response quality check
-      moderator.py           #   Safety filter
-      services.py            #   MCP service registry
-    rag/                     # RAG agent (numpy vector search)
-    mcp/                     # MCP agent (tool calling)
-    talk/                    # General conversation agent
-    llm/                     # Provider implementations (Ollama, Gemini, Anthropic, OpenAI)
-    api.py                   # REST endpoints
-frontend/                    # React + TypeScript + Tailwind
-services/                    # MCP servers (finance, weather)
-data/                        # Documents for RAG indexing
+    agent/                     # Agent framework
+      agent.py                 #   Agent class (name, system_prompt, act)
+      tools.py                 #   Tool definitions, build_tools, filter_tools
+      types.py                 #   Chat/Agent protocols, Message, Reply, UserContext
+      llm/                     #   Provider implementations (Ollama, Gemini, Anthropic, OpenAI)
+        registry.py            #   Model registry, resolve by name
+        pricer.py              #   Token cost calculator
+      mcp/                     #   MCP client and tool handler
+      rag/                     #   RAG client (numpy vector search, topic-aware)
+    orchestrator/              # Orchestration pipeline
+      orchestrator.py          #   Lifecycle (startup/shutdown), stream generator
+      router.py                #   LLM-based intent classification
+      evaluator.py             #   Response sufficiency check, agent forwarding
+      moderator.py             #   Safety filter
+    config.py                  # YAML config loader
+    api.py                     # REST/SSE endpoints
+frontend/                      # React + TypeScript + Tailwind
+services/                      # MCP servers (finance, weather)
 ```

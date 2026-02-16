@@ -8,52 +8,34 @@ class Config:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
 
-        self._talk = _dict_to_list(data["talk"]["llm"])
+        self._llm = _dict_to_list(data["llm"])
         self._embedding = data["rag"]["embeddings"]
-
-        self._max_reflections: int = data["orchestrator"].get("max_reflections", 2)
-        self._rag_top_k: int = data["rag"].get("top_k", 3)
-        self._pipeline_models = {
-            "mcp": data["mcp"]["llm"],
-            "rag": data["rag"]["llm"],
-            "orchestrator": data["orchestrator"]["llm"],
-        }
-
-        self._pricing = data["pricing"]
-        self._mcp_services = data["mcp"].get("services", {})
+        self._rag_params = data["rag"].get("params", {})
+        self._pricing = data.get("pricing", {})
+        self._mcp_services = data.get("mcp", {}).get("services", {})
+        self._agents = data.get("agents", {})
+        self._workflow = data.get("workflow", {})
 
     @property
-    def talk(self) -> list[dict]:
-        return self._talk
+    def llm(self) -> list[dict]:
+        return self._llm
 
-    def find_talk_model(self, model: str) -> dict | None:
-        for cfg in self._talk:
-            if cfg.get("model") == model:
-                return cfg
-        return None
-
-    def list_talk_models(self) -> list[str]:
-        return [cfg["model"] for cfg in self._talk if _is_available(cfg)]
-
-    def default_talk_model(self) -> str:
-        models = self.list_talk_models()
-        if not models:
-            raise RuntimeError("No talk models available")
-        return models[0]
-
-    def get_pipeline_model(self, key: str) -> dict:
-        return self._pipeline_models[key]
-
-    def get_embedding_config(self) -> dict:
+    @property
+    def embedding(self) -> dict:
         return self._embedding
 
-    @property
-    def max_reflections(self) -> int:
-        return self._max_reflections
+    def list_models(self) -> list[str]:
+        return [cfg["model"] for cfg in self._llm if _is_available(cfg)]
+
+    def default_model(self) -> str:
+        models = self.list_models()
+        if not models:
+            raise RuntimeError("No models available")
+        return models[0]
 
     @property
-    def rag_top_k(self) -> int:
-        return self._rag_top_k
+    def rag_params(self) -> dict:
+        return self._rag_params
 
     @property
     def pricing(self) -> dict:
@@ -62,6 +44,14 @@ class Config:
     @property
     def mcp_services(self) -> dict:
         return self._mcp_services
+
+    @property
+    def agents(self) -> dict:
+        return self._agents
+
+    @property
+    def workflow(self) -> dict:
+        return self._workflow
 
 
 def _dict_to_list(cfg) -> list[dict]:
