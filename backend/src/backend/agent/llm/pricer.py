@@ -1,4 +1,4 @@
-from ..core import Tokens
+from ..types import Tokens
 
 
 class Pricer:

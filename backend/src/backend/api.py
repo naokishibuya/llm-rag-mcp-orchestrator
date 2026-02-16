@@ -7,10 +7,10 @@ from fastapi.responses import StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel
 
+from .agent import Pricer, UserContext
+from .agent.types import Message
 from .config import Config
-from .core import Message, UserContext
 from .orchestrator import Orchestrator
-from .llm import Pricer
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,6 @@ class MessageModel(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[MessageModel]
     model: str | None = None
-    use_reflection: bool = True
     user_context: UserContext | None = None
 
 
@@ -42,12 +41,12 @@ class ChatRequest(BaseModel):
 
 @router.get("/models")
 async def get_models():
-    return {"models": config.list_talk_models()}
+    return {"models": config.list_models()}
 
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
-    """SSE streaming endpoint — emits thinking steps as they happen."""
+    """SSE streaming endpoint."""
     if not request.messages:
         async def empty():
             yield _event("error", message="No messages provided")
@@ -59,38 +58,24 @@ async def chat(request: ChatRequest):
         pricer = Pricer(config.pricing)
 
         try:
-            async for node_name, updates in orchestrator.stream(
+            async for event_name, data in orchestrator.stream(
                 query=query,
                 history=history,
                 model_name=model_name,
-                use_reflection=request.use_reflection,
                 context=context,
             ):
-                token_log = updates.get("token_log", [])
-                tokens = pricer.add(*token_log[0]) if token_log else None
+                if event_name == "moderation":
+                    yield _event("thinking", step=f"Moderation: {data['moderation'].verdict}")
 
-                if node_name == "moderation":
-                    yield _event("thinking", step=f"Moderation: {updates['moderation'].verdict}")
-
-                elif node_name == "router":
-                    routes = updates["routes"]
-                    yield _event("thinking", step=f"Routing: {', '.join(r.intent for r in routes)}", tokens=tokens)
-
-                elif node_name == "agent":
-                    route = updates["routes"][updates.get("cursor", 0)]
-                    for tool_name in route.reply.tools_used:
+                elif event_name == "agent":
+                    reply = data["reply"]
+                    for tool_name in reply.tools_used:
                         yield _event("thinking", step=f"Tool: {tool_name}")
-                    yield _event("thinking", step=f"Agent: {route.intent}", detail=route.reply.text, tokens=tokens)
+                    tokens = pricer.add(reply.model, reply.tokens)
+                    yield _event("answer", result={"intent": "chat", **asdict(reply)})
 
-                elif node_name == "reflector":
-                    ref = updates["reflection"]
-                    score_str = f", score: {ref.score:.2f}" if ref.score is not None else ""
-                    yield _event("thinking", step=f"Reflection: {ref.action}{score_str}", detail=ref.feedback, tokens=tokens)
-
-                elif node_name == "finalize":
-                    for route in updates["routes"]:
-                        yield _event("answer", result={"intent": route.intent, **asdict(route.reply)})
-                    yield _event("done", moderation=asdict(updates["moderation"]), **pricer.summary())
+                elif event_name == "done":
+                    yield _event("done", moderation=asdict(data["moderation"]), **pricer.summary())
 
         except Exception as e:
             logger.exception("Error during streaming")
@@ -100,7 +85,7 @@ async def chat(request: ChatRequest):
 
 
 def _parse_request(request: ChatRequest) -> tuple[str, str, list[Message], UserContext]:
-    model_name = request.model or config.default_talk_model()
+    model_name = request.model or config.default_model()
     query = request.messages[-1].content
     history = [Message(role=m.role, content=m.content) for m in request.messages[:-1]]
     return model_name, query, history, request.user_context or UserContext()

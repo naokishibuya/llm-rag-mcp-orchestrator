@@ -1,10 +1,11 @@
+import asyncio
 import json
 import logging
 import os
 
 import openai
 
-from ..core import Message, Reply, Role, Tokens
+from ..types import Message, Reply, Role, Tokens
 
 
 logger = logging.getLogger(__name__)
@@ -20,16 +21,16 @@ class OpenAIChat:
         self.max_tool_rounds = max_tool_rounds
         self._client = openai.OpenAI(api_key=_resolve_api_key(api_key_env))
 
-    def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
+    async def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
         messages = _map_messages(messages)
         if tools:
-            return self._with_tools(messages, tools)
-        return self._plain(messages)
+            return await self._with_tools(messages, tools)
+        return await self._plain(messages)
 
-    def query(self, messages: list[Message], schema: dict) -> Reply:
-        return self._plain(_map_messages(messages), schema)
+    async def query(self, messages: list[Message], schema: dict) -> Reply:
+        return await self._plain(_map_messages(messages), schema)
 
-    def _plain(self, messages: list[dict], schema: dict | None = None) -> Reply:
+    async def _plain(self, messages: list[dict], schema: dict | None = None) -> Reply:
         kwargs: dict = {}
         if schema is not None:
             kwargs["response_format"] = {
@@ -37,8 +38,9 @@ class OpenAIChat:
                 "json_schema": {"name": "structured_output", "strict": False, "schema": schema},
             }
         try:
-            response = self._client.chat.completions.create(
-                model=self.model, messages=messages, **self.params, **kwargs
+            response = await asyncio.to_thread(
+                self._client.chat.completions.create,
+                model=self.model, messages=messages, **self.params, **kwargs,
             )
         except openai.APIError as e:
             logger.warning("OpenAI API error: %s", e.message)
@@ -53,7 +55,7 @@ class OpenAIChat:
             ),
         )
 
-    def _with_tools(self, messages: list[dict], tools: dict[str, callable]) -> Reply:
+    async def _with_tools(self, messages: list[dict], tools: dict[str, callable]) -> Reply:
         msgs = list(messages)
         openai_tools = [_to_openai_tool(fn) for fn in tools.values()]
         input_tokens = 0
@@ -62,7 +64,8 @@ class OpenAIChat:
 
         for _ in range(self.max_tool_rounds):
             try:
-                response = self._client.chat.completions.create(
+                response = await asyncio.to_thread(
+                    self._client.chat.completions.create,
                     model=self.model, messages=msgs, tools=openai_tools, **self.params,
                 )
             except openai.APIError as e:
@@ -85,7 +88,10 @@ class OpenAIChat:
                 else:
                     try:
                         args = json.loads(tc.function.arguments)
-                        result = str(fn(**args))
+                        if asyncio.iscoroutinefunction(fn):
+                            result = str(await fn(**args))
+                        else:
+                            result = str(fn(**args))
                     except Exception as e:
                         result = f"Error: {e}"
                     tools_used.append(f"{tc.function.name}({tc.function.arguments})")

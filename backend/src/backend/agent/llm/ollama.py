@@ -1,9 +1,10 @@
+import asyncio
 import logging
 
 import ollama
 from tqdm import tqdm
 
-from ..core import Embedding, Message, Reply, Role, Tokens
+from ..types import Embedding, Message, Reply, Role, Tokens
 
 
 logger = logging.getLogger(__name__)
@@ -19,16 +20,16 @@ class OllamaChat:
         self.max_tool_rounds = max_tool_rounds
         _ensure_model(model)
 
-    def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
+    async def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
         messages = _map_messages(messages)
         if tools:
-            return self._with_tools(messages, tools)
-        return self._plain(messages)
+            return await self._with_tools(messages, tools)
+        return await self._plain(messages)
 
-    def query(self, messages: list[Message], schema: dict) -> Reply:
-        return self._plain(_map_messages(messages), schema)
+    async def query(self, messages: list[Message], schema: dict) -> Reply:
+        return await self._plain(_map_messages(messages), schema)
 
-    def _plain(self, messages: list[dict], schema: dict | None = None) -> Reply:
+    async def _plain(self, messages: list[dict], schema: dict | None = None) -> Reply:
         kwargs: dict = {
             "model": self.model,
             "messages": messages,
@@ -36,7 +37,7 @@ class OllamaChat:
         }
         if schema is not None:
             kwargs["format"] = schema
-        response = ollama.chat(**kwargs)
+        response = await asyncio.to_thread(ollama.chat, **kwargs)
         return Reply(
             text=response.message.content or "",
             model=self.model,
@@ -46,18 +47,20 @@ class OllamaChat:
             ),
         )
 
-    def _with_tools(self, messages: list[dict], tools: dict[str, callable]) -> Reply:
+    async def _with_tools(self, messages: list[dict], tools: dict[str, callable]) -> Reply:
         messages = list(messages)
         input_tokens = 0
         output_tokens = 0
         tools_used: list[str] = []
+        ollama_tools = [_to_ollama_tool(fn) for fn in tools.values()]
 
         for _ in range(self.max_tool_rounds):
-            response = ollama.chat(
+            response = await asyncio.to_thread(
+                ollama.chat,
                 model=self.model,
                 messages=messages,
                 options=self.params,
-                tools=list(tools.values()),
+                tools=ollama_tools,
             )
             input_tokens += response.get("prompt_eval_count", 0)
             output_tokens += response.get("eval_count", 0)
@@ -72,7 +75,10 @@ class OllamaChat:
                     result = f"Unknown tool: {tool_call.function.name}"
                 else:
                     try:
-                        result = str(fn(**tool_call.function.arguments))
+                        if asyncio.iscoroutinefunction(fn):
+                            result = str(await fn(**tool_call.function.arguments))
+                        else:
+                            result = str(fn(**tool_call.function.arguments))
                     except Exception as e:
                         result = f"Error: {e}"
                     tools_used.append(f"{tool_call.function.name}({tool_call.function.arguments})")
@@ -97,6 +103,18 @@ class OllamaEmbeddings:
             texts = [texts]
         embeddings = [ollama.embed(model=self.model, input=t)["embeddings"][0] for t in texts]
         return embeddings[0] if len(embeddings) == 1 else embeddings
+
+
+def _to_ollama_tool(fn) -> dict:
+    schema = fn.tool_schema
+    return {
+        "type": "function",
+        "function": {
+            "name": schema["name"],
+            "description": schema["description"],
+            "parameters": schema["input_schema"],
+        },
+    }
 
 
 def _map_messages(messages: list[Message]) -> list[dict]:

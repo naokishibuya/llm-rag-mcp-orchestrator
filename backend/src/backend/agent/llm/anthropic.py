@@ -1,10 +1,11 @@
+import asyncio
 import json
 import logging
 import os
 
 import anthropic
 
-from ..core import Message, Reply, Role, Tokens
+from ..types import Message, Reply, Role, Tokens
 
 
 logger = logging.getLogger(__name__)
@@ -20,17 +21,17 @@ class AnthropicChat:
         self.max_tool_rounds = max_tool_rounds
         self._client = anthropic.Anthropic(api_key=_resolve_api_key(api_key_env))
 
-    def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
+    async def ask(self, messages: list[Message], tools: dict[str, callable] | None = None) -> Reply:
         system, messages = _map_messages(messages)
         if tools:
-            return self._with_tools(system, messages, tools)
-        return self._plain(system, messages)
+            return await self._with_tools(system, messages, tools)
+        return await self._plain(system, messages)
 
-    def query(self, messages: list[Message], schema: dict) -> Reply:
+    async def query(self, messages: list[Message], schema: dict) -> Reply:
         system, messages = _map_messages(messages)
-        return self._plain(system, messages, schema)
+        return await self._plain(system, messages, schema)
 
-    def _plain(self, system: str | None, messages: list[dict], schema: dict | None = None) -> Reply:
+    async def _plain(self, system: str | None, messages: list[dict], schema: dict | None = None) -> Reply:
         kwargs: dict = {}
         if schema is not None:
             kwargs["tools"] = [{
@@ -41,7 +42,7 @@ class AnthropicChat:
             kwargs["tool_choice"] = {"type": "tool", "name": "structured_output"}
 
         try:
-            response = self._create(messages, system, **kwargs)
+            response = await asyncio.to_thread(self._create, messages, system, **kwargs)
         except anthropic.APIError as e:
             logger.warning("Anthropic API error: %s", e.message)
             return Reply(text=f"[Anthropic error: {e.message}]", model=self.model, success=False)
@@ -56,7 +57,7 @@ class AnthropicChat:
         text = "".join(block.text for block in response.content if hasattr(block, "text"))
         return Reply(text=text, model=self.model, tokens=tokens)
 
-    def _with_tools(self, system: str | None, messages: list[dict], tools: dict[str, callable]) -> Reply:
+    async def _with_tools(self, system: str | None, messages: list[dict], tools: dict[str, callable]) -> Reply:
         messages = list(messages)
         tool_schemas = [fn.tool_schema for fn in tools.values()]
         input_tokens = 0
@@ -65,7 +66,7 @@ class AnthropicChat:
 
         for _ in range(self.max_tool_rounds):
             try:
-                response = self._create(messages, system, tools=tool_schemas)
+                response = await asyncio.to_thread(self._create, messages, system, tools=tool_schemas)
             except anthropic.APIError as e:
                 logger.warning("Anthropic API error: %s", e.message)
                 return Reply(text=f"[Anthropic error: {e.message}]", model=self.model, success=False)
@@ -85,7 +86,10 @@ class AnthropicChat:
                     result = f"Unknown tool: {block.name}"
                 else:
                     try:
-                        result = str(fn(**block.input))
+                        if asyncio.iscoroutinefunction(fn):
+                            result = str(await fn(**block.input))
+                        else:
+                            result = str(fn(**block.input))
                     except Exception as e:
                         result = f"Error: {e}"
                     tools_used.append(f"{block.name}({block.input})")

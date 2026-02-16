@@ -12,17 +12,10 @@ type TokenUsage = {
   output_tokens: number;
 };
 
-type ReflectionInfo = {
-  action: string;
-  score: number | null;
-  feedback: string;
-};
-
 type AgentResult = {
   intent: string;
   model: string;
   text: string;
-  reflection: ReflectionInfo | null;
   tools_used: string[];
 };
 
@@ -202,7 +195,6 @@ export default function ChatComponent({ model }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [useReflection, setUseReflection] = useState(true);
   const [userContext] = useState<UserContext>(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const city = tz.split('/').pop()!.replace(/_/g, ' ');
@@ -245,7 +237,6 @@ export default function ChatComponent({ model }: ChatProps) {
         body: JSON.stringify({
           messages: payloadMessages,
           model,
-          use_reflection: useReflection,
           user_context: {
             ...userContext,
             local_time: new Intl.DateTimeFormat('en-US', {
@@ -353,24 +344,11 @@ export default function ChatComponent({ model }: ChatProps) {
   const clearChat = () => setMessages([]);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-4xl flex flex-col flex-1 min-h-0 max-h-[calc(100vh-10rem)]">
+    <div className="bg-white p-6 rounded-lg shadow border w-full max-w-4xl flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex justify-between items-center mb-2">
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500">
-            {messages.length > 0 ? `${messages.length} messages` : ''}
-          </span>
-          <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useReflection}
-              onChange={(e) => setUseReflection(e.target.checked)}
-              className="w-3 h-3"
-            />
-            <span title="Enable self-reflection (agent critiques and may revise its answer)">
-              Reflect
-            </span>
-          </label>
-        </div>
+        <span className="text-sm text-gray-500">
+          {messages.length > 0 ? `${messages.length} messages` : ''}
+        </span>
         {messages.length > 0 && (
           <button
             onClick={clearChat}

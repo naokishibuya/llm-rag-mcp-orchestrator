@@ -1,31 +1,43 @@
-talk:
-  llm:
-    - class: backend.llm.ollama.OllamaChat
-      model: qwen2.5:7b
-      params:
-        temperature: 0.5
-    - class: backend.llm.gemini.GeminiChat
-      model: gemini-2.5-flash
-      api_key_env: GEMINI_API_KEY
-      params:
-        temperature: 0.5
-    - class: backend.llm.anthropic.AnthropicChat
-      model: claude-haiku-4-5-20251001
-      api_key_env: ANTHROPIC_API_KEY
-      params:
-        temperature: 0.5
-    - class: backend.llm.openai.OpenAIChat
-      model: gpt-4.1-nano
-      api_key_env: OPENAI_API_KEY
-      params:
-        temperature: 0.5
-
-mcp:
-  llm:
-    class: backend.llm.ollama.OllamaChat
+llm:
+  - class: backend.agent.llm.ollama.OllamaChat
     model: qwen2.5:7b
     params:
-      temperature: 0.0
+      temperature: 0.5
+  - class: backend.agent.llm.gemini.GeminiChat
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+    params:
+      temperature: 0.5
+  - class: backend.agent.llm.anthropic.AnthropicChat
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+    params:
+      temperature: 0.5
+  - class: backend.agent.llm.openai.OpenAIChat
+    model: gpt-4.1-nano
+    api_key_env: OPENAI_API_KEY
+    params:
+      temperature: 0.5
+
+agents:
+  chat:
+    system_prompt: |
+      You are a helpful, friendly assistant.
+      Be concise but informative. If you don't know something, say so rather than making things up.
+
+      TOOL USAGE:
+      - Only call a tool when the user's question DIRECTLY asks for it.
+      - Do NOT call tools speculatively or for background context.
+      - Examples: "AAPL price" → get_stock_price, "weather in Tokyo" → get_weather,
+        "what time is it" → get_current_time. "Where is Mt. Fuji?" → no weather tool needed.
+
+      MATH & CURRENCY RULES:
+      - Use $...$ ONLY for LaTeX math (equations, variables, formulas).
+      - Use $$...$$ ONLY for block math.
+      - NEVER use \( \) or \[ \].
+    tools: all
+
+mcp:
   services:
     finance:
       url: http://127.0.0.1:8030/mcp
@@ -39,23 +51,20 @@ mcp:
       format: "Bulleted list of results, each with a markdown link title and a one-line summary."
 
 rag:
-  llm:
-    class: backend.llm.ollama.OllamaChat
-    model: qwen2.5:7b
-    params:
-      temperature: 0.0
   embeddings:
-    class: backend.llm.ollama.OllamaEmbeddings
+    class: backend.agent.llm.ollama.OllamaEmbeddings
     model: nomic-embed-text
   top_k: 3
-
-orchestrator:
-  llm:
-    class: backend.llm.ollama.OllamaChat
-    model: gemma2:9b
-    params:
-      temperature: 0.0
-  max_reflections: 2
+  topics:
+    - name: Space
+      description: "Solar system, planets, space exploration, astronauts, missions"
+      directory: space
+    - name: History
+      description: "Ancient civilizations, world wars, modern history, key events"
+      directory: history
+    - name: Geography
+      description: "Natural wonders, countries, landmarks, mountains, rivers"
+      directory: geography
 
 pricing:
   qwen2.5:7b:
@@ -70,9 +79,6 @@ pricing:
   gpt-4.1-nano:
     input: 0.10  # $ per 1M tokens
     output: 0.40
-  gemma2:9b:
-    input: 0.00
-    output: 0.00
   nomic-embed-text:
     input: 0.00
     output: 0.00
