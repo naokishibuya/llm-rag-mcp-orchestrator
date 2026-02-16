@@ -2,22 +2,22 @@ llm:
   - class: backend.agent.llm.ollama.OllamaChat
     model: qwen2.5:7b
     params:
-      temperature: 0.5
+      temperature: 0.3
   - class: backend.agent.llm.gemini.GeminiChat
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
     params:
-      temperature: 0.5
+      temperature: 0.3
   - class: backend.agent.llm.anthropic.AnthropicChat
     model: claude-haiku-4-5-20251001
     api_key_env: ANTHROPIC_API_KEY
     params:
-      temperature: 0.5
+      temperature: 0.3
   - class: backend.agent.llm.openai.OpenAIChat
     model: gpt-4.1-nano
     api_key_env: OPENAI_API_KEY
     params:
-      temperature: 0.5
+      temperature: 0.3
 
 workflow:
   max_forwards: 2

@@ -95,16 +95,24 @@ class Orchestrator:
         max_forwards = self._config.workflow.get("max_forwards", 2)
 
         # Route
-        agent_name, reasoning, needs_context, router_reply = await route(model, query, agents_cfg)
+        result = await route(model, query, agents_cfg)
         yield "thinking", {
-            "step": f"Router \u2192 {agent_name}",
-            "detail": reasoning,
-            "tokens": router_reply.tokens,
-            "model": router_reply.model,
+            "step": f"Router \u2192 {result.agent}",
+            "detail": result.reasoning,
+            "tokens": result.reply.tokens,
+            "model": result.reply.model,
         }
 
+        # Clarification — return early if query is too vague
+        if result.needs_clarification:
+            reply = Reply(text=result.clarification, model=result.reply.model, tokens=result.reply.tokens)
+            yield "agent", {"reply": reply, "agent_name": result.agent}
+            yield "done", {"moderation": moderation}
+            return
+
         # Agent loop
-        agent_context = context if needs_context else None
+        agent_name = result.agent
+        agent_context = context if result.needs_user_context else None
         reply = None
         for attempt in range(max_forwards + 1):
             # Run agent with filtered tools

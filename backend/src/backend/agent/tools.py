@@ -9,7 +9,7 @@ from .rag.client import RAGClient
 from .types import UserContext
 
 
-def tool(fn):
+def _tool(fn):
     """Decorator that attaches a `.tool_schema` dict derived from the function signature."""
     sig = inspect.signature(fn)
     properties = {}
@@ -33,7 +33,7 @@ def tool(fn):
     return fn
 
 
-@tool
+@_tool
 def calculate(expression: str) -> float:
     """Evaluate a mathematical expression.
 
@@ -48,7 +48,7 @@ def calculate(expression: str) -> float:
     return float(eval(expression, {"__builtins__": {}}, allowed))
 
 
-@tool
+@_tool
 def get_current_time(tz: str = "UTC") -> str:
     """Get the current date and time.
 
@@ -64,7 +64,7 @@ def get_current_time(tz: str = "UTC") -> str:
 
 
 def _make_context_tool(context: UserContext):
-    @tool
+    @_tool
     def get_user_context() -> str:
         """Get user's information about:
          - city
@@ -81,12 +81,11 @@ def _make_rag_tool(rag_client: RAGClient):
     topic_names = rag_client.topic_names()
     topic_descs = rag_client.topic_descriptions()
     topic_list = "\n".join(f"  - {t}" for t in topic_descs) if topic_descs else "  (general)"
-    top_k = rag_client.top_k
 
-    @tool
+    @_tool
     def search_knowledge_base(query: str, topic: str = "") -> str:
         """Search the knowledge base."""
-        results = rag_client.search(query, top_k, topic=topic)
+        results = rag_client.search(query, topic=topic)
         if not results or results[0].score < 0.3:
             return "No relevant documents found in the knowledge base."
         chunks = []

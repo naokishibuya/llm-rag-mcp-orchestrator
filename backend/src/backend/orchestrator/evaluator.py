@@ -1,58 +1,47 @@
 import json
 import logging
 
+from pydantic import BaseModel, Field
+
 from ..agent.types import Chat, Message, Reply, Role
 
 
 logger = logging.getLogger(__name__)
 
 
-EVALUATOR_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "reasoning": {
-            "type": "string",
-            "description": "Analysis of whether the response adequately answers the query.",
-        },
-        "sufficient": {
-            "type": "boolean",
-            "description": "True if the response is good enough to return to the user.",
-        },
-        "next_agent": {
-            "type": "string",
-            "description": "If not sufficient, the name of the agent that should try next.",
-        },
-    },
-    "required": ["reasoning", "sufficient"],
-}
+class _EvaluatorSchema(BaseModel):
+    reasoning : str  = Field(description="Analysis of whether the response adequately answers the query.")
+    sufficient: bool = Field(description="True if the response is good enough to return to the user.")
+    next_agent: str  = Field(default="", description="If not sufficient, the name of the agent that should try next.")
+
+_EVALUATOR_SCHEMA = _EvaluatorSchema.model_json_schema()
+
+
+_EVALUATOR_PROMPT = """\
+Evaluate whether the response adequately answers the user's query.
+
+IMPORTANT: Default to sufficient=true. Only mark as insufficient if:
+  - The response is factually wrong or completely off-topic
+  - The query clearly needed a DIFFERENT specialist (e.g. asked about stocks but got a weather agent)
+  - The agent failed to use a tool it clearly needed
+
+Mark as sufficient even if the response is:
+  - A simple greeting or acknowledgment (for greeting queries)
+  - Not perfect but reasonably addresses the query
+  - Short but correct
+
+{other_agents}Respond with JSON: {{"reasoning": "...", "sufficient": true/false, "next_agent": "..."}}"""
 
 
 def _build_evaluator_prompt(agents_cfg: dict, current_agent: str) -> str:
-    other_agents = {
-        name: cfg for name, cfg in agents_cfg.items() if name != current_agent
-    }
-    lines = [
-        "Evaluate whether the response adequately answers the user's query.",
-        "",
-        "IMPORTANT: Default to sufficient=true. Only mark as insufficient if:",
-        "  - The response is factually wrong or completely off-topic",
-        "  - The query clearly needed a DIFFERENT specialist (e.g. asked about stocks but got a weather agent)",
-        "  - The agent failed to use a tool it clearly needed",
-        "",
-        "Mark as sufficient even if the response is:",
-        "  - A simple greeting or acknowledgment (for greeting queries)",
-        "  - Not perfect but reasonably addresses the query",
-        "  - Short but correct",
-        "",
-    ]
+    other_agents = {name: cfg for name, cfg in agents_cfg.items() if name != current_agent}
     if other_agents:
-        lines.append("Other available agents (for forwarding if insufficient):")
-        for name, cfg in other_agents.items():
-            role = cfg.get("role", "general")
-            lines.append(f"  - {name}: {role}")
-        lines.append("")
-    lines.append('Respond with JSON: {"reasoning": "...", "sufficient": true/false, "next_agent": "..."}')
-    return "\n".join(lines)
+        lines = "Other available agents (for forwarding if insufficient):\n"
+        lines += "\n".join(f"  - {name}: {cfg.get('role', 'general')}" for name, cfg in other_agents.items())
+        lines += "\n\n"
+    else:
+        lines = ""
+    return _EVALUATOR_PROMPT.format(other_agents=lines)
 
 
 async def evaluate(
@@ -73,7 +62,7 @@ async def evaluate(
         Message(role=Role.USER, content=user_content),
     ]
 
-    reply = await model.query(messages, EVALUATOR_SCHEMA)
+    reply = await model.query(messages, _EVALUATOR_SCHEMA)
 
     other_agents = [name for name in agents_cfg if name != current_agent]
     default_next = other_agents[0] if other_agents else current_agent
