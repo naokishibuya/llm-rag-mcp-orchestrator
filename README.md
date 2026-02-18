@@ -34,7 +34,7 @@ A multi-agent chat system with configurable agents, tool calling (MCP), RAG, and
   2. **Router** — LLM call to classify intent and pick the best agent
   3. **Agent** — LLM call with filtered tools (each agent only sees its allowed tools)
   4. **Evaluator** — LLM call to judge response quality; forwards to another agent if insufficient (up to `max_forwards` attempts)
-- **Agents** — defined in YAML config with a role, system prompt, and tool list (assistant, researcher, analyst, weather_expert)
+- **Agents** — defined in YAML config with a role, system prompt, and tool list (assistant, knowledge, researcher, analyst, weather_expert)
 - **Tools** — calculator, time, user context, RAG search, and MCP services (finance, weather, Tavily web search)
 
 <br>
@@ -147,22 +147,45 @@ agents:
     role: "General chat, greetings, simple questions, time, math"
     system_prompt: |
       You are a helpful, friendly assistant.
-      Be concise but informative.
+      Be concise but informative. If you don't know something, say so rather than making things up.
     tools: [get_current_time, get_user_context, calculate]
 
+  knowledge:
+    role: "Questions about space, history, geography — topics in the local knowledge base"
+    system_prompt: |
+      You are a knowledge base specialist.
+      Search the knowledge base to answer questions. Cite sources when available.
+      If the knowledge base has no relevant results, say so.
+    tools: [search_knowledge_base]
+
   researcher:
-    role: "Knowledge questions about space, history, geography, and current events"
+    role: "General research, technical questions, how-to guides, current events, and anything not covered by other agents"
     system_prompt: |
       You are a research specialist.
-      Cite sources when available.
-    tools: [search_knowledge_base, tavily_search]
+      Use web search to find accurate, up-to-date information.
+      Cite sources with links when available. Be thorough but concise.
+    tools: [tavily_search]
 
   analyst:
-    role: "Finance, stocks, market data, numerical analysis"
-    tools: [get_stock_price, calculate]
+    role: "Finance, stocks, market data, and financial calculations"
+    system_prompt: |
+      You are a senior financial analyst with deep expertise in equity research.
+      When answering complex financial questions:
+      1. Break the question into research steps — gather price, ratios, financials as needed.
+      2. Use multiple tools to cross-validate findings (e.g. check both ratios and income trends).
+      3. Present data clearly in markdown tables when comparing numbers.
+      4. Provide structured analysis: key metrics, bull case, bear case, and a summary.
+      5. Always cite which data points support your conclusions.
+      Be precise with numbers. Never fabricate data — only report what the tools return.
+    tools: [get_stock_price, get_income_statement, get_balance_sheet, get_cash_flow, get_historical_prices, get_company_info, get_key_ratios, compare_stocks, calculate]
+    disclaimer: "This is for informational purposes only and not financial advice."
 
   weather_expert:
     role: "Weather queries, forecasts, conditions"
+    system_prompt: |
+      You are a weather specialist.
+      Provide clear, concise weather information.
+      Include relevant details like temperature, conditions, and forecasts.
     tools: [get_weather, get_user_context]
 ```
 
@@ -174,15 +197,23 @@ Entries under `llm` become selectable models in the UI dropdown:
 llm:
   - class: backend.agent.llm.ollama.OllamaChat
     model: qwen2.5:7b
+    params:
+      temperature: 0.3
   - class: backend.agent.llm.gemini.GeminiChat
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
+    params:
+      temperature: 0.3
   - class: backend.agent.llm.anthropic.AnthropicChat
     model: claude-haiku-4-5-20251001
     api_key_env: ANTHROPIC_API_KEY
+    params:
+      temperature: 0.3
   - class: backend.agent.llm.openai.OpenAIChat
     model: gpt-4.1-nano
     api_key_env: OPENAI_API_KEY
+    params:
+      temperature: 0.3
 ```
 
 Models requiring API keys are excluded from the UI when credentials are missing.
@@ -228,3 +259,7 @@ backend/
 frontend/                      # React + TypeScript + Tailwind
 services/                      # MCP servers (finance, weather)
 ```
+
+## Disclaimer
+
+The financial analysis features in this project are for **educational and demonstration purposes only**. Nothing produced by the analyst agent constitutes financial advice, investment recommendations, or endorsements. Financial data may be delayed, incomplete, or inaccurate. Always consult a qualified financial advisor before making investment decisions.

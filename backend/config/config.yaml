@@ -46,10 +46,16 @@ agents:
   analyst:
     role: "Finance, stocks, market data, and financial calculations"
     system_prompt: |
-      You are a financial analyst.
-      Present data clearly in tables when appropriate.
-      Be precise with numbers and cite data sources.
-    tools: [get_stock_price, calculate]
+      You are a senior financial analyst with deep expertise in equity research.
+      When answering complex financial questions:
+      1. Break the question into research steps — gather price, ratios, financials as needed.
+      2. Use multiple tools to cross-validate findings (e.g. check both ratios and income trends).
+      3. Present data clearly in markdown tables when comparing numbers.
+      4. Provide structured analysis: key metrics, bull case, bear case, and a summary.
+      5. Always cite which data points support your conclusions.
+      Be precise with numbers. Never fabricate data — only report what the tools return.
+    tools: [get_stock_price, get_income_statement, get_balance_sheet, get_cash_flow, get_historical_prices, get_company_info, get_key_ratios, compare_stocks, calculate]
+    disclaimer: "This is for informational purposes only and not financial advice. Data may be delayed or inaccurate. Consult a qualified financial advisor before making investment decisions."
   weather_expert:
     role: "Weather queries, forecasts, conditions"
     system_prompt: |
