@@ -1,0 +1,29 @@
+{
+  "name": "chat-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "chat-cli": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "highlight.js": "^11.11.1",
+    "ink": "^5.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "lowlight": "^3.3.0",
+    "react": "^18.3.1",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^18.3.18",
+    "@types/yargs": "^17.0.33",
+    "typescript": "~5.8.3"
+  }
+}
