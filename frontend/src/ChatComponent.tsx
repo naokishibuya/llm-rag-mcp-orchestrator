@@ -17,6 +17,7 @@ type AgentResult = {
   model: string;
   text: string;
   tools_used: string[];
+  disclaimer?: string;
 };
 
 type ModerationInfo = {
@@ -139,6 +140,24 @@ function ThinkingSection({ steps, isStreaming }: { steps: ThinkingStep[]; isStre
   );
 }
 
+function Disclaimer({ text }: { text: string }) {
+  const lines = text.split('\n');
+  return (
+    <div className="mt-3 text-xs text-gray-400 italic">
+      {lines.length === 1 ? (
+        <p><span className="font-semibold not-italic">Disclaimer:</span> {lines[0]}</p>
+      ) : (
+        <>
+          <p className="font-semibold not-italic">Disclaimers:</p>
+          <ul className="list-disc list-inside mt-1">
+            {lines.map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AssistantMessage({ content, meta, thinking, isStreaming }: {
   content: string;
   meta?: ResponseMeta;
@@ -159,6 +178,9 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
                   <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{content}</Markdown>
                 </div>
               )}
+              {meta?.results[0]?.disclaimer && (
+                <Disclaimer text={meta.results[0].disclaimer} />
+              )}
               {meta && <ChainMetadata meta={meta} />}
               {meta && meta.moderation.verdict !== 'allow' && meta.moderation.reason && (
                 <div className="mt-1 text-xs text-orange-600">
@@ -176,6 +198,9 @@ function AssistantMessage({ content, meta, thinking, isStreaming }: {
                 <div className="prose prose-sm max-w-none">
                   <Markdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{result.text}</Markdown>
                 </div>
+                {result.disclaimer && (
+                  <Disclaimer text={result.disclaimer} />
+                )}
               </div>
             ))}
             <ChainMetadata meta={meta} />
@@ -204,11 +229,20 @@ export default function ChatComponent({ model }: ChatProps) {
   });
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (ta) {
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    }
+  }, [input]);
 
   const sendMessages = async (updatedMessages: Message[]) => {
     setLoading(true);
@@ -336,7 +370,7 @@ export default function ChatComponent({ model }: ChatProps) {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!input.trim() || !model) return;
 
@@ -460,12 +494,21 @@ export default function ChatComponent({ model }: ChatProps) {
       </div>
 
       <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
+        <textarea
+          ref={textareaRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (input.trim() && model) handleSubmit(e);
+            }
+          }}
           placeholder="Type your message..."
-          className="flex-grow border p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className="flex-grow border p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
           disabled={loading}
+          rows={1}
+          style={{ maxHeight: '8rem', overflowY: 'auto' }}
         />
         <button
           type="submit"

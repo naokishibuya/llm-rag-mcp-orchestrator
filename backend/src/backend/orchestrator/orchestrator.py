@@ -114,10 +114,12 @@ class Orchestrator:
         agent_name = result.agent
         agent_context = context if result.needs_user_context else None
         reply = None
+        agents_used: list[str] = []
         for attempt in range(max_forwards + 1):
             # Run agent with filtered tools
             tool_names = agents_cfg[agent_name].get("tools", "all")
             agent_tools = filter_tools(all_tools, tool_names)
+            agents_used.append(agent_name)
             reply = await self._agents[agent_name].act(
                 model=model, query=query, history=history,
                 tools=agent_tools, context=agent_context,
@@ -155,8 +157,12 @@ class Orchestrator:
                 break
             agent_name = next_agent
 
-        # Final answer
-        yield "agent", {"reply": reply, "agent_name": agent_name}
+        # Final answer — collect unique disclaimers from all agents in the chain
+        disclaimers = dict.fromkeys(
+            agents_cfg[a]["disclaimer"] for a in agents_used if agents_cfg[a].get("disclaimer")
+        )
+        disclaimer = "\n".join(disclaimers) if disclaimers else None
+        yield "agent", {"reply": reply, "agent_name": agent_name, "disclaimer": disclaimer}
         yield "done", {"moderation": moderation}
 
     async def _refresh_mcp(self):

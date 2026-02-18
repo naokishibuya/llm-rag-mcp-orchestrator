@@ -79,8 +79,12 @@ async def chat(request: ChatRequest):
                 elif event_name == "agent":
                     reply = data["reply"]
                     agent_name = data.get("agent_name", "chat")
+                    disclaimer = data.get("disclaimer")
                     tokens = pricer.add(reply.model, reply.tokens)
-                    yield _event("answer", result={"intent": agent_name, **asdict(reply)})
+                    result = {"intent": agent_name, **asdict(reply)}
+                    if disclaimer:
+                        result["disclaimer"] = disclaimer
+                    yield _event("answer", result=result)
 
                 elif event_name == "done":
                     yield _event("done", moderation=asdict(data["moderation"]), **pricer.summary())
