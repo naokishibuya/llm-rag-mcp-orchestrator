@@ -25,9 +25,25 @@ A multi-agent chat system with configurable agents, tool calling (MCP), RAG, and
   <img src="images/chat-ui.png" alt="Chat UI" width="700"/>
 </p>
 
+- **CLI**
+  - Interactive CLI with markdown rendering, syntax highlighting, and thinking spinner
+
+<br>
+
+<table align="center" border="1"  width="700">
+  <tr>
+    <td align="center">
+      <br>
+      <img src="images/chat-cli.png" alt="Chat CLI">
+      <br><br>
+    </td>
+  </tr>
+</table>
+
 ## Architecture
 
 - **Frontend** — React + TypeScript + Tailwind, streams orchestration events via SSE
+- **CLI** — React + Ink (terminal UI), same SSE streaming as the web frontend
 - **Backend** — FastAPI, stateless (receives full message history each request)
 - **Orchestrator** — async generator that coordinates the pipeline:
   1. **Moderator** — blocks unsafe queries (pattern matching)
@@ -132,6 +148,28 @@ npm run dev
 ```
 
 Open http://localhost:5173
+
+### 5. CLI (alternative to web frontend)
+
+```bash
+cd cli
+npm install
+npm run build
+
+# Interactive chat (prompts for model selection)
+npx chat-cli
+
+# With a specific model
+npx chat-cli --model gemini-2.5-flash
+
+# Custom backend URL
+npx chat-cli --server http://remote:8000
+
+# List available models
+npx chat-cli models
+```
+
+In-session commands: `/model` (switch model), `/clear` (reset history), `/quit` (exit), `/help`
 
 ## Configuration
 
@@ -257,6 +295,7 @@ backend/
     config.py                  # YAML config loader
     api.py                     # REST/SSE endpoints
 frontend/                      # React + TypeScript + Tailwind
+cli/                           # Interactive terminal UI (React + Ink)
 services/                      # MCP servers (finance, weather)
 ```
 
